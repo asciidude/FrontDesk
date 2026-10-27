@@ -46,7 +46,8 @@ export class MessageCollector {
         }
     }
 
-    // clear timeout and return saved responses
+    // clear timeout, return saved responses, unregister collector
+    // from switchboard
     stop() {
         if(this.ended) return;
         this.ended = true;
