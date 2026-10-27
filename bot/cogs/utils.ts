@@ -1,4 +1,4 @@
-import { switchboard } from '..';
+import { activeSetups, switchboard } from '..';
 import { Cog, Embed } from '../../dependencies/yapper';
 import { MessageCollector } from '../../utils/MessageCollector';
 
@@ -20,13 +20,25 @@ export class Utils extends Cog {
          * Run the assisted setup - support/admin roles, the ticket category, first ticket panel, and log channel done here.
          */
         setup: {
-            description: 'Run the assisted setup.',
+            description: 'Run the assisted setup. Server admins only.',
             run: async (msg: any) => {
+                // TODO: Add server admin permission
+
+                let serverId = msg.server_id;
+
+                if(activeSetups.has(serverId)) {
+                    msg.reply('This server already has an active setup running.');
+                    return;
+                }
+
+                activeSetups.add(serverId);
+
+                let embedColor = '#50299E';
 
                 const setupEmbed = new Embed({
                     title: 'Guided Setup',
                     description: 'Thank you for choosing FrontDesk, where support is made easy & free.\n\nTo begin your setup, please mention your __support roles__, seperated by spaces.',
-                    color: '#50299E',
+                    color: embedColor,
                     footer: {
                         'text': 'FrontDesk by asciixd'
                     },
@@ -40,7 +52,7 @@ export class Utils extends Cog {
                     await this.bot.api(
                         'PATCH',
                         `/channels/${msg.channel_id}/messages/${message.id}`,
-                        { embeds: embed }
+                        { embeds: [embed] }
                     );
                 }
 
@@ -81,7 +93,7 @@ export class Utils extends Cog {
                 let supportRoles: any;
                 let adminRoles: any;
 
-                // Callback (- the reply)
+                // Callback (- the reply) for collecting roles.
                 const collectorCb = (collectedMessages: any[], roles: any) => {
                     const response = collectedMessages[0];
                     const mentions = response.content.trim().split(/\s+/);
@@ -92,15 +104,48 @@ export class Utils extends Cog {
                     }).filter(Boolean);
                 }
 
-                new MessageCollector(switchboard, filter, options, (collectedMessages: any[]) => {
+                new MessageCollector(switchboard, filter, options, async (collectedMessages: any[]) => {
                     if(collectedMessages.length === 0) {
-                        msg.reply('Setup timed out. Please run the command again.');
+                        editEmbed(
+                            setupEmbed
+                                .title('Oops!')
+                                .description('Setup timed out. Please run the command again.')
+                                .color('red')
+                        )
+
+                        activeSetups.delete(serverId);
                         return;
                     }
                     
-                    const roles = collectorCb(collectedMessages, supportRoles);
+                    const roles = await collectorCb(collectedMessages, supportRoles);
                     
-                    msg.reply(`Successfully registered **${roles.length}** role(s) for support, now please provide __admin roles__.`);
+                    editEmbed(
+                        setupEmbed
+                            .title('Guided Setup')
+                            .description(`Successfully registered **${roles.lenght} role(s)** for support.\n\nNow, please provide admin roles.`)
+                            .color(embedColor)
+                    );
+                    
+                    new MessageCollector(switchboard, filter, options, async(collectedMessages: any[]) => {
+                        if(collectedMessages.length === 0) {
+                            editEmbed(
+                                setupEmbed
+                                    .title('Oops!')
+                                    .description('Setup timed out. Please run the command again.')
+                                    .color('red')
+                            )
+
+                            activeSetups.delete(serverId);
+                            return;
+                        }
+
+                        editEmbed(
+                            setupEmbed
+                                .title('Guided Setup')
+                                .description(`Successfully registered **${roles.lenght} role(s)** for admins.`)
+                                .color(embedColor)
+                        );
+                    });
                 });
             }
         }
