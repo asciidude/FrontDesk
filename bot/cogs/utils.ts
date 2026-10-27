@@ -117,12 +117,12 @@ export class Utils extends Cog {
                         return;
                     }
                     
-                    const roles = await collectorCb(collectedMessages, supportRoles);
+                    const roles = collectorCb(collectedMessages, supportRoles);
                     
                     editEmbed(
                         setupEmbed
                             .title('Guided Setup')
-                            .description(`Successfully registered **${roles.lenght} role(s)** for support.\n\nNow, please provide admin roles.`)
+                            .description(`Successfully registered **${roles.length} role(s)** for support.\n\nNow, please provide admin roles.`)
                             .color(embedColor)
                     );
                     
