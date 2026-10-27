@@ -22,6 +22,7 @@ export class Utils extends Cog {
         setup: {
             description: 'Run the assisted setup.',
             run: async (msg: any) => {
+
                 const setupEmbed = new Embed({
                     title: 'Guided Setup',
                     description: 'Thank you for choosing FrontDesk, where support is made easy & free.\n\nTo begin your setup, please mention your __support roles__, seperated by spaces.',
@@ -34,7 +35,15 @@ export class Utils extends Cog {
                 });
 
                 const message = await this.bot.sendEmbed(msg.channel_id, setupEmbed);
-                
+            
+                const editEmbed = async (embed: Embed) => {
+                    await this.bot.api(
+                        'PATCH',
+                        `/channels/${msg.channel_id}/messages/${message.id}`,
+                        { embeds: embed }
+                    );
+                }
+
                 // Check if the incoming message is from the author
                 const filter = async (incomingMsg: any) => {
                     if(incomingMsg.id === msg.id) return false;
@@ -48,14 +57,12 @@ export class Utils extends Cog {
                     const isValidMentions = parts.every((part: string) => mentionRegex.test(part));
                     
                     if(!isValidMentions) {
-                        await this.bot.api('PATCH', `/channels/${msg.channel_id}/messages/${message.id}`, {
-                            embeds: [
-                                setupEmbed
-                                    .title('Oops!')
-                                    .description('Please be sure to seperate by spaces and __only__ include role **mentions**.\n\nPlease **retype your message**.')
-                                    .color('red')
-                            ]
-                        });
+                        editEmbed(
+                            setupEmbed
+                                .title('Oops!')
+                                .description('Please be sure to seperate by spaces and __only__ include role **mentions**.\n\nPlease **retype your message**.')
+                                .color('red')
+                        );
 
                         return false;
                     }

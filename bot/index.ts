@@ -9,6 +9,9 @@ if(
 const bot = new Bot(process.env.BOT_TOKEN!);
 export const switchboard = new MessageSwitchboard(bot);
 
+// used for /setup command so servers can't run 2 setups at once
+export let activeSetups = new Set<string>();
+
 await bot.loadCogs('./cogs');
 
 bot.on('ready', () => {
