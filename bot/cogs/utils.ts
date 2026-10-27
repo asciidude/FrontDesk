@@ -21,7 +21,7 @@ export class Utils extends Cog {
          */
         setup: {
             description: 'Run the assisted setup.',
-            run: (msg: any) => {
+            run: async (msg: any) => {
                 const setupEmbed = new Embed({
                     title: 'Guided Setup',
                     description: 'Thank you for choosing FrontDesk, where support is made easy & free.\n\nTo begin your setup, please mention your __support roles__, seperated by spaces.',
@@ -33,10 +33,10 @@ export class Utils extends Cog {
                     timestamp: new Date()
                 });
 
-                const message = this.bot.sendEmbed(msg.channel_id, setupEmbed);
+                const message = await this.bot.sendEmbed(msg.channel_id, setupEmbed);
                 
                 // Check if the incoming message is from the author
-                const filter = (incomingMsg: any) => {
+                const filter = async (incomingMsg: any) => {
                     if(incomingMsg.id === msg.id) return false;
                     
                     if(!(incomingMsg.author_id === msg.author_id
@@ -46,9 +46,15 @@ export class Utils extends Cog {
                     const parts = incomingMsg.content.trim().split(/\s+/);
 
                     const isValidMentions = parts.every((part: string) => mentionRegex.test(part));
+                    
                     if(!isValidMentions) {
-                        this.bot.edit(msg.channel_id, message.id, null, {
-                            embeds: [setupEmbed.description('Whoops! Please be sure to seperate by spaces and only mention roles. Try running `/setup` again.')]
+                        await this.bot.api('PATCH', `/channels/${msg.channel_id}/messages/${message.id}`, {
+                            embeds: [
+                                setupEmbed
+                                    .title('Oops!')
+                                    .description('Please be sure to seperate by spaces and __only__ include role **mentions**. Rerun with `/setup`!')
+                                    .color('red')
+                            ]
                         });
 
                         return false;
@@ -87,14 +93,6 @@ export class Utils extends Cog {
                     collectorCb(collectedMessages, supportRoles);
                     
                     msg.reply(`Successfully registered **${supportRoles.length}** role(s) for support, now please provide __admin roles__.`);
-                });
-
-                new MessageCollector(switchboard, filter, options, (collectedMessages: any[]) => {
-                    if(collectedMessages.length === 0) {
-                        msg.reply('Setup timed out. Please run the command again.');
-
-
-                    }
                 });
             }
         }
