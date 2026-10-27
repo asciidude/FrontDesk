@@ -1,0 +1,16 @@
+{
+  "name": "frontdesk",
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "@types/node": "^26.6.5"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "scripts":{
+    "start": "bun run ./bot/index.ts",
+    "dev": "bun --watch run ./bot/index.ts"
+  },
+  "private": true,
+  "type": "module"
+}
