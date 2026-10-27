@@ -63,11 +63,14 @@ export class Utils extends Cog {
                     if(!(incomingMsg.author_id === msg.author_id
                         && incomingMsg.channel_id === msg.channel_id))
                             return false;
+
+                    return true;
                 }
 
                 // Check if the incoming message only contains role mentions.
                 const roleFilter = async (incomingMsg: any) => {
-                    if(!isAuthor(incomingMsg)) return false;
+                    if(!isAuthor(incomingMsg))
+                        return false;
 
                     const parts = incomingMsg.content.trim().split(/\s+/);
 
@@ -109,6 +112,9 @@ export class Utils extends Cog {
                     }).filter(Boolean);
                 }
 
+                // ------+-----
+                // SUPPORT ROLES
+                // ------+-----
                 new MessageCollector(switchboard, roleFilter, options, async (collectedMessages: any[]) => {
                     if(collectedMessages.length === 0) {
                         editEmbed(
@@ -131,6 +137,9 @@ export class Utils extends Cog {
                             .color(embedColor)
                     );
                     
+                    // ------+-----
+                    // ADMIN ROLES
+                    // ------+-----
                     new MessageCollector(switchboard, roleFilter, options, async(collectedMessages: any[]) => {
                         if(collectedMessages.length === 0) {
                             await editEmbed(
@@ -149,9 +158,25 @@ export class Utils extends Cog {
                         editEmbed(
                             setupEmbed
                                 .title('Guided Setup')
-                                .description(`Successfully registered **${roles.length} role(s)** for admins.\n\nNow, provide your ticket panel channel. You will be able to add more in the future.`)
+                                .description(`Successfully registered **${roles.length} role(s)** for admins.\n\nNow, provide your ticket panel channel.\n-# You will be able to add more in the future if you wish.`)
                                 .color(embedColor)
                         );
+
+                        // channels <#abc-123>
+
+                        // ------+-----
+                        // TICKET PANEL
+                        // ------+-----
+                        new MessageCollector(
+                            switchboard,
+                            () => {
+
+                            },
+                            options,
+                            async(collectedMessages: any[]) => {
+                                
+                            }
+                        )
                     });
                 });
             }
