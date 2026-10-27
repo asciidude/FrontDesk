@@ -10,7 +10,7 @@ export class MessageCollector {
     timer: any;
     options: MessageCollectorOptions;
 
-    filter: (msg: any) => boolean;
+    filter: (msg: any) => boolean | Promise<boolean>;
     cb: (collectedMessages: any[]) => void;
 
     private saved: string[];
@@ -33,8 +33,10 @@ export class MessageCollector {
         this.timer = setTimeout(() => this.stop(), options.duration);
     }
 
-    processMessage(msg: any) {
-        if(!this.filter(msg)) return;
+    async processMessage(msg: any) {
+        if(!await this.filter(msg)) return;
+        if(this.ended) return;
+        
         this.saved.push(msg);
 
         if(this.saved.length >= this.options.maxResponses) {

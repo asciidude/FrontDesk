@@ -72,7 +72,7 @@ export class Utils extends Cog {
                 const mentionRegex = /^<@&([0-9a-fA-F-]{36})>$/;
                 
                 let supportRoles: any;
-                let adminRoles: string[];
+                let adminRoles: any;
 
                 // Callback (- the reply)
                 const collectorCb = (collectedMessages: any[], roles: any) => {
@@ -83,16 +83,17 @@ export class Utils extends Cog {
 
                     const response = collectedMessages[0];
                     const mentions = response.content.trim().split(/\s+/);
-                    roles = mentions.map((mention: string) => {
+
+                    return mentions.map((mention: string) => {
                         const match = mention.match(mentionRegex);
                         return match ? match[1] : '';
                     }).filter(Boolean);
                 }
 
                 new MessageCollector(switchboard, filter, options, (collectedMessages: any[]) => {
-                    collectorCb(collectedMessages, supportRoles);
+                    const roles = collectorCb(collectedMessages, supportRoles);
                     
-                    msg.reply(`Successfully registered **${supportRoles.length}** role(s) for support, now please provide __admin roles__.`);
+                    msg.reply(`Successfully registered **${roles.length}** role(s) for support, now please provide __admin roles__.`);
                 });
             }
         }

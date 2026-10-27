@@ -4,9 +4,9 @@ export class MessageSwitchboard {
     constructor(client: any) {
         this.activeCollectors = new Set();
 
-        client.on('message', (msg: any) => {
+        client.on('message', async (msg: any) => {
             for(const collector of this.activeCollectors) {
-                collector.processMessage(msg);
+                await collector.processMessage(msg);
             }
         });
     }
