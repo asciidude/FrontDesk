@@ -76,11 +76,6 @@ export class Utils extends Cog {
 
                 // Callback (- the reply)
                 const collectorCb = (collectedMessages: any[], roles: any) => {
-                    if(collectedMessages.length === 0) {
-                        msg.reply('Setup timed out. Please run the command again.');
-                        return;
-                    }
-
                     const response = collectedMessages[0];
                     const mentions = response.content.trim().split(/\s+/);
 
@@ -91,6 +86,11 @@ export class Utils extends Cog {
                 }
 
                 new MessageCollector(switchboard, filter, options, (collectedMessages: any[]) => {
+                    if(collectedMessages.length === 0) {
+                        msg.reply('Setup timed out. Please run the command again.');
+                        return;
+                    }
+                    
                     const roles = collectorCb(collectedMessages, supportRoles);
                     
                     msg.reply(`Successfully registered **${roles.length}** role(s) for support, now please provide __admin roles__.`);
