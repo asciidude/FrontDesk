@@ -16,8 +16,8 @@ You are allowed to run your own instance of FrontDesk **given you do not use our
 In order to do so:
 1. Create a `.env` file containing all the information that `.env.TEMPLATE` requests. This is crucial.
 2. **If you are not using Bun:**
-    a. update tsconfig to remove `"types": ["bun-types"]` and install the `dotenv` package, importing it in the TypeScript file.
-    b. update package.json to run start/dev scripts with node and nodemon.
+    2.a. update tsconfig to remove `"types": ["bun-types"]` and install the `dotenv` package, importing it in the TypeScript file.
+    2.b. update package.json to run start/dev scripts with node and nodemon.
 3. Run the bot using `npm run start` or `npm run dev`
 
 
@@ -29,3 +29,6 @@ You may use, copy, modify, distribute, sublicense, and sell copies of the softwa
 The MIT License applies to the software code, not to project branding, logos, or other assets that are separately identified as excluded from the license.
 
 Third-party dependencies remain subject to their respective licenses.
+
+# Copyright
+Copyright (C) asciixd. All rights reserved.
