@@ -56,13 +56,18 @@ export class Utils extends Cog {
                     );
                 }
 
-                // Check if the incoming message is from the author
-                const filter = async (incomingMsg: any) => {
+                // Check if the incoming message is from the original author.
+                let isAuthor = (incomingMsg: any) => {
                     if(incomingMsg.id === msg.id) return false;
                     
                     if(!(incomingMsg.author_id === msg.author_id
                         && incomingMsg.channel_id === msg.channel_id))
                             return false;
+                }
+
+                // Check if the incoming message only contains role mentions.
+                const roleFilter = async (incomingMsg: any) => {
+                    if(!isAuthor(incomingMsg)) return false;
 
                     const parts = incomingMsg.content.trim().split(/\s+/);
 
@@ -72,7 +77,7 @@ export class Utils extends Cog {
                         editEmbed(
                             setupEmbed
                                 .title('Oops!')
-                                .description('Please be sure to seperate by spaces and __only__ include role **mentions**.\n\nPlease **retype your message**.')
+                                .description('Please be sure to seperate role mentions by spaces and __only__ include role **mentions**.\n\nPlease **retype your message**.')
                                 .color('red')
                         );
 
@@ -93,7 +98,7 @@ export class Utils extends Cog {
                 let supportRoles: any;
                 let adminRoles: any;
 
-                // Callback (- the reply) for collecting roles.
+                // Callback for collecting roles.
                 const collectorCb = (collectedMessages: any[], roles: any) => {
                     const response = collectedMessages[0];
                     const mentions = response.content.trim().split(/\s+/);
@@ -104,7 +109,7 @@ export class Utils extends Cog {
                     }).filter(Boolean);
                 }
 
-                new MessageCollector(switchboard, filter, options, async (collectedMessages: any[]) => {
+                new MessageCollector(switchboard, roleFilter, options, async (collectedMessages: any[]) => {
                     if(collectedMessages.length === 0) {
                         editEmbed(
                             setupEmbed
@@ -117,18 +122,18 @@ export class Utils extends Cog {
                         return;
                     }
                     
-                    const roles = collectorCb(collectedMessages, supportRoles);
-                    
-                    editEmbed(
+                    let roles = collectorCb(collectedMessages, supportRoles);
+
+                    await editEmbed(
                         setupEmbed
                             .title('Guided Setup')
                             .description(`Successfully registered **${roles.length} role(s)** for support.\n\nNow, please provide admin roles.`)
                             .color(embedColor)
                     );
                     
-                    new MessageCollector(switchboard, filter, options, async(collectedMessages: any[]) => {
+                    new MessageCollector(switchboard, roleFilter, options, async(collectedMessages: any[]) => {
                         if(collectedMessages.length === 0) {
-                            editEmbed(
+                            await editEmbed(
                                 setupEmbed
                                     .title('Oops!')
                                     .description('Setup timed out. Please run the command again.')
@@ -139,10 +144,12 @@ export class Utils extends Cog {
                             return;
                         }
 
+                        roles = collectorCb(collectedMessages, adminRoles);
+
                         editEmbed(
                             setupEmbed
                                 .title('Guided Setup')
-                                .description(`Successfully registered **${roles.lenght} role(s)** for admins.`)
+                                .description(`Successfully registered **${roles.length} role(s)** for admins.\n\nNow, provide your ticket panel channel. You will be able to add more in the future.`)
                                 .color(embedColor)
                         );
                     });
