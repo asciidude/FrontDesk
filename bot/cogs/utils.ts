@@ -52,7 +52,7 @@ export class Utils extends Cog {
                             embeds: [
                                 setupEmbed
                                     .title('Oops!')
-                                    .description('Please be sure to seperate by spaces and __only__ include role **mentions**. Rerun with `/setup`!')
+                                    .description('Please be sure to seperate by spaces and __only__ include role **mentions**.\n\nPlease **retype your message**.')
                                     .color('red')
                             ]
                         });
