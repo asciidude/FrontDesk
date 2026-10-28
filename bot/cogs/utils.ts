@@ -158,7 +158,7 @@ export class Utils extends Cog {
 
                         final = roleCollection(collectedMessages, adminRoles);
 
-                        editEmbed(
+                        await editEmbed(
                             setupEmbed
                                 .title('Guided Setup')
                                 .description(`Successfully registered **${final.length} role(s)** for admins.\n\nNow, provide your ticket panel channel.\n-# You will be able to add more in the future if you wish.`)
@@ -172,7 +172,7 @@ export class Utils extends Cog {
                         // ------+-----
                         new MessageCollector(
                             switchboard,
-                            (incomingMsg: any) => {
+                            async (incomingMsg: any) => {
                                 if(!isAuthor(incomingMsg))
                                     return false;
 
@@ -182,7 +182,7 @@ export class Utils extends Cog {
                                 const isValidChannels = parts.every((part: string) => channelRegex.test(part));
                                 
                                 if(!isValidChannels) {
-                                    editEmbed(
+                                    await editEmbed(
                                         setupEmbed
                                             .title('Oops!')
                                             .description('Please be sure to seperate channels by spaces and __only__ include channel **mentions** (#channel, not just "channel").\n\nPlease **retype your message**.')
@@ -204,20 +204,63 @@ export class Utils extends Cog {
                                 const firstChannelRaw = collectedMessages[0].content.split(/\s+/)[0];
                                 panelId = firstChannelRaw.slice(2, -1);
 
-                                editEmbed(
+                                await editEmbed(
                                     setupEmbed
                                         .title('Guided Setup')
-                                        .description(`Successfully registered ${firstChannelRaw} for your first ticket panel.\n\nNow I will try to create a ticket category.`)
+                                        .description(`Successfully registered ${firstChannelRaw} for your first ticket panel.\n\nNow I will try to create ticket categories.`)
                                         .color(embedColor)
                                 );
 
-                                try {
-                                    // currently errors without proper permissions
-                                    this.bot.createCategory(serverId, 'Open Tickets');
-                                    this.bot.createCategory(serverId, 'Closed Tickets');
-                                } catch(e: any) {
-                                    console.log(e);
+                                // Attempt creating ticket categories
+                                const tryCreateCategories = async(retry: boolean) => {
+                                    try {
+                                        await this.bot.createCategory(serverId, 'Open Tickets');
+                                        await this.bot.createCategory(serverId, 'Closed Tickets');
+                                        return true;
+                                    } catch (e: any) {
+                                        // WHYYY is there not permission bits bro oh my GOOOOODDDDD
+                                        await editEmbed(
+                                            setupEmbed
+                                                .title('Oops!')
+                                                .description(retry ? `I didn't get the permissions. Please try again!\n\n` : '' + `Make sure I have the following permissions:\n- Manage channels\n- Manage messages\n- Embed links\nPlease type \`done\` when you have added those permissions.`)
+                                                .color('red')
+                                        );
+                                        return false;
+                                    }
                                 }
+
+                                // Retry loop
+                                const askPermissionsLoop = async(retry: boolean): Promise<void | Boolean> => {
+                                    new MessageCollector(
+                                        switchboard,
+                                        (m: any) => m.content.toLowerCase() === 'done',
+                                        options,
+                                        async (collectedMessages: string[]) => {
+                                            if (await checkTimeout(collectedMessages))
+                                                return true;
+
+                                            if (await tryCreateCategories(retry))
+                                                return true;
+
+                                            // Creation failed, listen for "done" again
+                                            await askPermissionsLoop(true);
+                                        }
+                                    );
+                                };
+
+                                // 2 second delay so the user can see it's registered properly
+                                setTimeout(async () => {
+                                    if (await !tryCreateCategories(false)) {
+                                        if(await askPermissionsLoop(false)) {
+                                            await editEmbed(
+                                                setupEmbed
+                                                    .title('Guided Setup')
+                                                    .description(`I have setup categories for opened and closed tickets!`)
+                                                    .color(embedColor)
+                                            );
+                                        }
+                                    }
+                                }, 2000);
                             }
                         )
                     });
