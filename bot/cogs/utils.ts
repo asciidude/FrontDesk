@@ -230,7 +230,7 @@ export class Utils extends Cog {
                                 }
 
                                 // Retry loop
-                                const askPermissionsLoop = async(retry: boolean): Promise<void | Boolean> => {
+                                const askPermissionsLoop = async(): Promise<void | Boolean> => {
                                     new MessageCollector(
                                         switchboard,
                                         (m: any) => m.content.toLowerCase() === 'done',
@@ -239,11 +239,11 @@ export class Utils extends Cog {
                                             if (await checkTimeout(collectedMessages))
                                                 return true;
 
-                                            if (await tryCreateCategories(retry))
+                                            if (await tryCreateCategories(true))
                                                 return true;
 
                                             // Creation failed, listen for "done" again
-                                            await askPermissionsLoop(true);
+                                            await askPermissionsLoop();
                                         }
                                     );
                                 };
@@ -251,7 +251,7 @@ export class Utils extends Cog {
                                 // 2 second delay so the user can see it's registered properly
                                 setTimeout(async () => {
                                     if (await !tryCreateCategories(false)) {
-                                        if(await askPermissionsLoop(false)) {
+                                        if(await askPermissionsLoop()) {
                                             await editEmbed(
                                                 setupEmbed
                                                     .title('Guided Setup')
