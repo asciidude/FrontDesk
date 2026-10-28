@@ -230,6 +230,7 @@ export class Utils extends Cog {
                                 }
 
                                 // Retry loop
+                                // TODO: Fix retry loop getting stuck on askPermissionLoop
                                 const askPermissionsLoop = async(): Promise<void | Boolean> => {
                                     new MessageCollector(
                                         switchboard,
