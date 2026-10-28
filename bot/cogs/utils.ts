@@ -90,34 +90,10 @@ export class Utils extends Cog {
                     return true;
                 };
 
-                // Options for message collectors
-                const options = {
-                    duration: 300000, // 5 min
-                    maxResponses: 1
-                }
-
-                const mentionRegex = /^<@&([0-9a-fA-F-]{36})>$/;
-                
-                let supportRoles: any;
-                let adminRoles: any;
-
-                // Callback for collecting roles.
-                const collectorCb = (collectedMessages: any[], roles: any) => {
-                    const response = collectedMessages[0];
-                    const mentions = response.content.trim().split(/\s+/);
-
-                    return mentions.map((mention: string) => {
-                        const match = mention.match(mentionRegex);
-                        return match ? match[1] : '';
-                    }).filter(Boolean);
-                }
-
-                // ------+-----
-                // SUPPORT ROLES
-                // ------+-----
-                new MessageCollector(switchboard, roleFilter, options, async (collectedMessages: any[]) => {
+                // Check if the collector has timed out
+                const checkTimeout = async (collectedMessages: string[]) => {
                     if(collectedMessages.length === 0) {
-                        editEmbed(
+                        await editEmbed(
                             setupEmbed
                                 .title('Oops!')
                                 .description('Setup timed out. Please run the command again.')
@@ -125,15 +101,51 @@ export class Utils extends Cog {
                         )
 
                         activeSetups.delete(serverId);
-                        return;
+                        return true;
                     }
+
+                    return false;
+                }
+
+                // Options for message collectors
+                const options = {
+                    duration: 300000, // 5 min
+                    maxResponses: 1
+                }
+
+                const mentionRegex = /^<@&([0-9a-fA-F-]{36})>$/;
+                const channelRegex = /^<#([0-9a-fA-F-]{36})>$/;
+                
+                let supportRoles: any;
+                let adminRoles: any;
+                let panelId: string;
+
+                // Callback for collecting roles.
+                const roleCollection = (collectedMessages: any[], roles: any) => {
+                    const response = collectedMessages[0];
+                    const mentions = response.content.trim().split(/\s+/);
+
+                    roles = mentions.map((mention: string) => {
+                        const match = mention.match(mentionRegex);
+                        return match ? match[1] : '';
+                    }).filter(Boolean);
+
+                    return roles;
+                }
+
+                // ------+-----
+                // SUPPORT ROLES
+                // ------+-----
+                new MessageCollector(switchboard, roleFilter, options, async (collectedMessages: any[]) => {
+                    if(await checkTimeout(collectedMessages))
+                        return;
                     
-                    let roles = collectorCb(collectedMessages, supportRoles);
+                    let final = roleCollection(collectedMessages, supportRoles);
 
                     await editEmbed(
                         setupEmbed
                             .title('Guided Setup')
-                            .description(`Successfully registered **${roles.length} role(s)** for support.\n\nNow, please provide admin roles.`)
+                            .description(`Successfully registered **${final.length} role(s)** for support.\n\nNow, please provide admin roles.`)
                             .color(embedColor)
                     );
                     
@@ -141,24 +153,15 @@ export class Utils extends Cog {
                     // ADMIN ROLES
                     // ------+-----
                     new MessageCollector(switchboard, roleFilter, options, async(collectedMessages: any[]) => {
-                        if(collectedMessages.length === 0) {
-                            await editEmbed(
-                                setupEmbed
-                                    .title('Oops!')
-                                    .description('Setup timed out. Please run the command again.')
-                                    .color('red')
-                            )
-
-                            activeSetups.delete(serverId);
+                        if(await checkTimeout(collectedMessages))
                             return;
-                        }
 
-                        roles = collectorCb(collectedMessages, adminRoles);
+                        final = roleCollection(collectedMessages, adminRoles);
 
                         editEmbed(
                             setupEmbed
                                 .title('Guided Setup')
-                                .description(`Successfully registered **${roles.length} role(s)** for admins.\n\nNow, provide your ticket panel channel.\n-# You will be able to add more in the future if you wish.`)
+                                .description(`Successfully registered **${final.length} role(s)** for admins.\n\nNow, provide your ticket panel channel.\n-# You will be able to add more in the future if you wish.`)
                                 .color(embedColor)
                         );
 
@@ -169,12 +172,52 @@ export class Utils extends Cog {
                         // ------+-----
                         new MessageCollector(
                             switchboard,
-                            () => {
+                            (incomingMsg: any) => {
+                                if(!isAuthor(incomingMsg))
+                                    return false;
 
+                                // Check if everything in the message is a channel
+                                const parts = incomingMsg.content.trim().split(/\s+/);
+
+                                const isValidChannels = parts.every((part: string) => channelRegex.test(part));
+                                
+                                if(!isValidChannels) {
+                                    editEmbed(
+                                        setupEmbed
+                                            .title('Oops!')
+                                            .description('Please be sure to seperate channels by spaces and __only__ include channel **mentions** (#channel, not just "channel").\n\nPlease **retype your message**.')
+                                            .color('red')
+                                    );
+
+                                    return false;
+                                }
+
+                                return true;
                             },
                             options,
                             async(collectedMessages: any[]) => {
-                                
+                                if(await checkTimeout(collectedMessages))
+                                    return;
+
+                                // Find the first mentioned channel,
+                                // then slice the content of (<#)id(>) to extract the ID
+                                const firstChannelRaw = collectedMessages[0].content.split(/\s+/)[0];
+                                panelId = firstChannelRaw.slice(2, -1);
+
+                                editEmbed(
+                                    setupEmbed
+                                        .title('Guided Setup')
+                                        .description(`Successfully registered ${firstChannelRaw} for your first ticket panel.\n\nNow I will try to create a ticket category.`)
+                                        .color(embedColor)
+                                );
+
+                                try {
+                                    // currently errors without proper permissions
+                                    this.bot.createCategory(serverId, 'Open Tickets');
+                                    this.bot.createCategory(serverId, 'Closed Tickets');
+                                } catch(e: any) {
+                                    console.log(e);
+                                }
                             }
                         )
                     });
