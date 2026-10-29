@@ -18,6 +18,15 @@ bot.on('ready', () => {
     bot.setStatus('online', 'Checking for tickets...');
 });
 
+bot.on('interaction', async (i: any) => {
+    console.log('INTERACTION:', i);
+
+    if (i.custom_id === 'setup:cancel') {
+        // Handle cancellation
+        console.log('Setup cancelled');
+    }
+});
+
 bot.start().catch((e:any) => {
     // well shit
     console.error(`[ERR - Startup]: ${e.message}`);

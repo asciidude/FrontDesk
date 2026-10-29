@@ -1,5 +1,5 @@
 import { activeSetups, switchboard } from '..';
-import { Cog, Embed } from '../../dependencies/yapper';
+import { Button, Cog, Embed, Row } from '../../dependencies/yapper';
 import { MessageCollector } from '../../utils/MessageCollector';
 
 export class Utils extends Cog {
@@ -22,10 +22,19 @@ export class Utils extends Cog {
         setup: {
             description: 'Run the assisted setup. Server admins only.',
             run: async (msg: any) => {
-                // TODO: Add server admin permission
                 let serverId = msg.server_id;
 
-                console.log(await this.bot.member(serverId, msg.author_id));
+                // compare authorMember roles to serverRoles
+                // & search for `administrator` in that roles `perms`
+                let authorMember = await this.bot.member(serverId, msg.author_id);
+                let serverRoles = await this.bot.roles(serverId);
+
+                if (!authorMember.roles.some((roleId: any) =>
+                    serverRoles.some((role: any) => role.id === roleId && role.perms.administrator === true)
+                )) {
+                    msg.reply('You do not have permissions to use this command.');
+                    return;
+                }
 
                 if (activeSetups.has(serverId)) {
                     msg.reply('This server already has an active setup running.');
@@ -47,7 +56,16 @@ export class Utils extends Cog {
                     timestamp: new Date()
                 });
 
-                const message = await this.bot.sendEmbed(msg.channel_id, setupEmbed);
+                const message = await msg.reply('',
+                    {
+                        embeds: [setupEmbed],
+                        components: [
+                            new Row(
+                                Button.danger('Cancel Setup', 'setup:cancel').emoji('🫡')
+                            )
+                        ]
+                    }
+                );
 
                 const editEmbed = async (embed: Embed) => {
                     await this.bot.api(
