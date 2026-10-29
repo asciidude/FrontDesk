@@ -808,10 +808,9 @@ export class Bot {
       if (!name && !forOther) {
         // Commands typed with another prefix, or ones we didn't register. A prefix can be longer than one
         // character ('yap!'); the longest one that fits goes first so '!!' wins over '!'.
-        const content = data.content || '';
         for (const p of [...this.prefixes].sort((a, b) => b.length - a.length)) {
           if (!p || !content.startsWith(p)) continue;
-          const m = /^([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i.exec(content.slice(p.length));
+          const m = /^([a-z0-9\_-]{1,32})(?:\s+([\s\S]*))?$/i.exec(content.slice(p.length));
           if (m && this.commands.has(m[1].toLowerCase())) { name = m[1].toLowerCase(); args = (m[2] || '').trim(); break; }
         }
       }
@@ -824,7 +823,7 @@ export class Bot {
         let ok = true;
         if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
         if (ok) {
-          try { await c.fn(msg); } catch (e) { await this.fail(e); }
+          Promise.resolve().then(() => c.fn(msg)).catch(e => this.fail(e));
           await this.emit('command', msg);
         }
       }
