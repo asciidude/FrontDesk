@@ -2,6 +2,8 @@ import { activeSetups, switchboard } from '..';
 import { Button, Cog, Embed, Row } from '../../dependencies/yapper';
 import { MessageCollector } from '../../utils/MessageCollector';
 
+class SetupCancelled extends Error { }
+
 export class Utils extends Cog {
     commands = {
         /**
@@ -23,10 +25,11 @@ export class Utils extends Cog {
             description: 'Run the assisted setup. Server admins only.',
             run: async (msg: any) => {
                 let serverId = msg.server_id;
+                let authorId = msg.author_id;
 
                 // compare authorMember roles to serverRoles
                 // & search for `administrator` in that roles `perms`
-                let authorMember = await this.bot.member(serverId, msg.author_id);
+                let authorMember = await this.bot.member(serverId, authorId);
                 let serverRoles = await this.bot.roles(serverId);
 
                 if (!authorMember.roles.some((roleId: any) =>
@@ -41,7 +44,12 @@ export class Utils extends Cog {
                     return;
                 }
 
-                activeSetups.add(serverId);
+                activeSetups.set(serverId, {
+                    serverId, authorId
+                });
+
+                let cancelled = false;
+                let cancelCollector: (() => void) | undefined;
 
                 let embedColor = '#50299E';
 
@@ -52,7 +60,6 @@ export class Utils extends Cog {
                     footer: {
                         'text': 'FrontDesk by asciixd'
                     },
-                    link: 'https://yapin.gg/invite/qaFqK6zVXp',
                     timestamp: new Date()
                 });
 
@@ -67,22 +74,32 @@ export class Utils extends Cog {
                     }
                 );
 
-                const editEmbed = async (embed: Embed) => {
+                const editEmbed = async (embed: Embed, keepButton: boolean = true) => {
+                    let opts;
+                    if(!keepButton) {
+                        opts = {
+                            embeds: [embed],
+                            components: []
+                        }
+                    } else {
+                        opts = { embeds: [embed] }
+                    }
+                    
                     await this.bot.api(
                         'PATCH',
                         `/channels/${msg.channel_id}/messages/${message.id}`,
-                        { embeds: [embed] }
+                        opts
                     );
                 }
 
                 // Check if the incoming message is from the original author.
                 let isAuthor = (incomingMsg: any) => {
-                    if (incomingMsg.id === msg.id) return false;
-
-                    if (!(incomingMsg.author_id === msg.author_id
-                        && incomingMsg.channel_id === msg.channel_id))
-                        return false;
-
+                    if (
+                        incomingMsg.id === msg.id
+                        || typeof incomingMsg.content !== 'string'
+                        ||!(incomingMsg.author_id === authorId
+                          && incomingMsg.channel_id === msg.channel_id)
+                    ) return false;
                     return true;
                 }
 
@@ -116,7 +133,8 @@ export class Utils extends Cog {
                             setupEmbed
                                 .title('Oops!')
                                 .description('Setup timed out. Please run the command again.')
-                                .color('red')
+                                .color('red'),
+                            false
                         )
 
                         activeSetups.delete(serverId);
@@ -148,81 +166,127 @@ export class Utils extends Cog {
 
                 // Promise for sequential execution
                 const collectResponse = (filter: (msg: any) => boolean | Promise<boolean>, options: any): Promise<any[]> => {
-                    return new Promise((resolve) => {
-                        new MessageCollector(
+                    return new Promise((resolve, reject) => {
+                        const collector = new MessageCollector(
                             switchboard,
                             filter,
                             options,
                             async (messages: any[]) => {
+                                if (cancelled)
+                                    return;
+
                                 if (await checkTimeout(messages))
                                     return;
 
                                 resolve(messages);
                             }
                         );
+
+                        cancelCollector = () => {
+                            editEmbed(
+                                setupEmbed
+                                    .title('Setup cancelled')
+                                    .description('You have cancelled guided setup for FrontDesk.')
+                                    .color('red'),
+                                false
+                            );
+
+                            cancelled = true;
+                            collector.stop();
+                            reject(new SetupCancelled());
+                        }
+
+                        const setup = activeSetups.get(serverId);
+                        if (setup)
+                            setup.cancel = cancelCollector;
                     });
                 };
 
-                // SUPPORT ROLES
-                const supportResponse = await collectResponse(roleFilter, options);
-                const supportRoles = roleCollection(supportResponse);
+                try {
+                    // SUPPORT ROLES
+                    const supportResponse = await collectResponse(roleFilter, options);
+                    const supportRoles = roleCollection(supportResponse);
 
-                await editEmbed(
-                    setupEmbed
-                        .title('Guided Setup')
-                        .description(`Successfully registered **${supportRoles.length} role(s)** for support.\n\nNow, please provide admin roles.`)
-                        .color(embedColor)
-                );
+                    await editEmbed(
+                        setupEmbed
+                            .title('Guided Setup')
+                            .description(`Successfully registered **${supportRoles.length} role(s)** for support.\n\nNow, please provide admin roles.`)
+                            .color(embedColor)
+                    );
 
-                // ADMIN ROLES
-                const adminResponse = await collectResponse(roleFilter, options);
-                const adminRoles = roleCollection(adminResponse);
+                    // ADMIN ROLES
+                    const adminResponse = await collectResponse(roleFilter, options);
+                    const adminRoles = roleCollection(adminResponse);
 
-                await editEmbed(
-                    setupEmbed
-                        .title('Guided Setup')
-                        .description(`Successfully registered **${adminRoles.length} role(s)** for admins.\n\nNow, provide your first ticket panel channel.\n-# You will be able to add more in the future if you wish.`)
-                        .color(embedColor)
-                );
+                    await editEmbed(
+                        setupEmbed
+                            .title('Guided Setup')
+                            .description(`Successfully registered **${adminRoles.length} role(s)** for admins.\n\nNow, provide your first ticket panel channel.\n-# You will be able to add more in the future if you wish.`)
+                            .color(embedColor)
+                    );
 
-                // TICKET PANEL
-                const panelResponse = await collectResponse(async (incomingMsg: any) => {
-                    if (!isAuthor(incomingMsg))
-                        return false;
+                    // TICKET PANEL
+                    const panelResponse = await collectResponse(async (incomingMsg: any) => {
+                        if (!isAuthor(incomingMsg))
+                            return false;
 
-                    // Check if everything in the message is a channel
-                    const parts = incomingMsg.content.trim().split(/\s+/);
+                        // Check if everything in the message is a channel
+                        const parts = incomingMsg.content.trim().split(/\s+/);
 
-                    const isValidChannels = parts.every((part: string) => channelRegex.test(part));
+                        const isValidChannels = parts.every((part: string) => channelRegex.test(part));
 
-                    if (!isValidChannels) {
-                        await editEmbed(
-                            setupEmbed
-                                .title('Oops!')
-                                .description('Please be sure to seperate channels by spaces and __only__ include channel **mentions** (#channel, not just "channel").\n\nPlease **retype your message**.')
-                                .color('red')
-                        );
+                        if (!isValidChannels) {
+                            await editEmbed(
+                                setupEmbed
+                                    .title('Oops!')
+                                    .description('Please be sure to seperate channels by spaces and __only__ include channel **mentions** (#channel, not just "channel").\n\nPlease **retype your message**.')
+                                    .color('red')
+                            );
 
-                        return false;
-                    }
+                            return false;
+                        }
 
-                    return true;
-                }, options);
+                        return true;
+                    }, options);
 
-                const firstChannelRaw = panelResponse[0].content.split(/\s+/)[0];
-                const panelId = firstChannelRaw.slice(2, -1);
+                    const firstChannelRaw = panelResponse[0].content.split(/\s+/)[0];
+                    const panelId = firstChannelRaw.slice(2, -1);
 
-                await editEmbed(
-                    setupEmbed
-                        .title('Guided Setup')
-                        .description(`Successfully registered ${firstChannelRaw} for your first ticket panel.\n\nNow, provide your first ticket panel's name.`)
-                        .color(embedColor)
-                );
+                    await editEmbed(
+                        setupEmbed
+                            .title('Guided Setup')
+                            .description(`Successfully registered ${firstChannelRaw} for your first ticket panel.\n\nNow, provide your first ticket panel's name(\\*), description(\\*), color, and thumbnail image link (* = required | in that order, seperated by a new line).\n\nExample:\n\`\`\`\nSupport\nRequest a suppoort agent.\n#784FC9\nhttps://i.imgur.com/xlcL6.gif\`\`\``)
+                            .color(embedColor)
+                    );
+
+
+                } catch(e: any) {
+                    if(e instanceof SetupCancelled)
+                        return;
+
+                    editEmbed(setupEmbed, false);
+                    throw e;
+                } finally {
+                    editEmbed(setupEmbed, false);
+                    activeSetups.delete(serverId);
+                }
             }
         }
     };
 
     cogLoad() {
+        this.bot.on('setup:cancel', (ev: {
+            serverId: string, authorId: string
+        }) => {
+            const setup = activeSetups.get(ev.serverId);
+
+            if (!setup || setup.authorId !== ev.authorId)
+                return;
+
+            setup.cancel?.();
+            activeSetups.delete(ev.serverId);
+        });
+
         console.log('[COGS] Utils loaded.')
     };
 }

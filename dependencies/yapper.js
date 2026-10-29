@@ -803,6 +803,7 @@ export class Bot {
       const msg = this.wrap(data);
       let name = data.command;
       let args = data.args;
+      const content = String(data.content ?? '');
       // "/fish @OtherBot": a command picked for another bot (command_for) isn't ours to answer, even if we have /fish.
       const forOther = Array.isArray(data.command_for) && !data.command_for.includes(this.me?.id);
       if (!name && !forOther) {

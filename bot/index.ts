@@ -10,7 +10,11 @@ const bot = new Bot(process.env.BOT_TOKEN!);
 export const switchboard = new MessageSwitchboard(bot);
 
 // used for /setup command so servers can't run 2 setups at once
-export let activeSetups = new Set<string>();
+export let activeSetups = new Map<string, {
+    serverId: string,
+    authorId: string,
+    cancel?: () => void
+}>();
 
 await bot.loadCogs('./cogs');
 
@@ -19,11 +23,17 @@ bot.on('ready', () => {
 });
 
 bot.on('interaction', async (i: any) => {
-    console.log('INTERACTION:', i);
-
     if (i.custom_id === 'setup:cancel') {
-        // Handle cancellation
-        console.log('Setup cancelled');
+        let currentSetup = activeSetups.get(i.server_id);
+        if(!currentSetup || i.user_id !== currentSetup.authorId)
+            return;
+
+        await bot.emit('setup:cancel', {
+            serverId: i.server_id,
+            authorId: i.user_id
+        });
+
+        i.ack();
     }
 });
 
