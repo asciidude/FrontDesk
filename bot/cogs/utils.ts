@@ -1,5 +1,6 @@
 import { activeSetups, switchboard } from '..';
 import { Button, Cog, Embed, Row } from '../../dependencies/yapper';
+import { checkPermissions } from '../../utils/checkPermissions';
 import { MessageCollector } from '../../utils/MessageCollector';
 
 class SetupCancelled extends Error { }
@@ -27,15 +28,15 @@ export class Utils extends Cog {
                 let serverId = msg.server_id;
                 let authorId = msg.author_id;
 
-                // compare authorMember roles to serverRoles
-                // & search for `administrator` in that roles `perms`
-                let authorMember = await this.bot.member(serverId, authorId);
-                let serverRoles = await this.bot.roles(serverId);
-
-                if (!authorMember.roles.some((roleId: any) =>
-                    serverRoles.some((role: any) => role.id === roleId && role.perms.administrator === true)
+                if(!await checkPermissions(
+                    this.bot, serverId,
+                    ['administrator'],
+                    {
+                        authorId: authorId,
+                        bot: false
+                    }
                 )) {
-                    msg.reply('You do not have permissions to use this command.');
+                    msg.reply('You do not have the permissions to run this command.');
                     return;
                 }
 
@@ -165,7 +166,7 @@ export class Utils extends Cog {
                 }
 
                 // Promise for sequential execution
-                const collectResponse = (filter: (msg: any) => boolean | Promise<boolean>, options: any): Promise<any[]> => {
+                const collectResponse = (filter: null | ((msg: any) => boolean | Promise<boolean>), options: any): Promise<any[]> => {
                     return new Promise((resolve, reject) => {
                         const collector = new MessageCollector(
                             switchboard,
@@ -249,17 +250,59 @@ export class Utils extends Cog {
                         return true;
                     }, options);
 
+                    // PANEL CHANNEL
                     const firstChannelRaw = panelResponse[0].content.split(/\s+/)[0];
                     const panelId = firstChannelRaw.slice(2, -1);
 
                     await editEmbed(
                         setupEmbed
                             .title('Guided Setup')
-                            .description(`Successfully registered ${firstChannelRaw} for your first ticket panel.\n\nNow, provide your first ticket panel's name(\\*), description(\\*), color, and thumbnail image link (* = required | in that order, seperated by a new line).\n\nExample:\n\`\`\`\nSupport\nRequest a suppoort agent.\n#784FC9\nhttps://i.imgur.com/xlcL6.gif\`\`\``)
+                            .description(`Successfully registered ${firstChannelRaw} for your first ticket panel.\n\nNow, provide your first ticket panel's:\n 1. name(⭐)\n2. description(⭐)\n3. color\n4. thumbnail image link\n⭐ = required | in that order, seperated by a new line.\n\nExample:\n\`\`\`\nSupport\nRequest a suppoort agent.\n#784FC9\nhttps://i.imgur.com/xlcL6.gif\`\`\``)
+                            .color(embedColor)
+                    );
+                    
+                    // PANEL ITSELF
+                    const panelInfoResponse = await collectResponse(null, options);
+                    const panelInfo = panelInfoResponse[0].content.split('\n').slice(0, 4);
+                    
+                    // check if panelInfo length is <2 and prompt to enter correct info
+
+                    await editEmbed(
+                        setupEmbed
+                            .title('Guided Setup')
+                            .description(`Successfully registered the information for your first ticket panel.\n\nReview it here:\n\`\`\`\n${panelInfo.join('\n')}\`\`\`\n\nCreating open/closed ticket categories now.`)
                             .color(embedColor)
                     );
 
+                    // 3 sec. delay for review
+                    setTimeout(async () => {
+                        try {
+                            await this.bot.createCategory(serverId, 'Open Tickets');
+                            await this.bot.createCategory(serverId, 'Closed Tickets');
 
+                            await editEmbed(
+                                    setupEmbed
+                                        .title('Guided Setup')
+                                        .description(`I have successfully created the categories.\n\n**I cannot change the permissions in these categories.** You must do it yourself, but make sure I'm allowed to see them otherwise I won't work in your server.\n\nSaving your changes to the database now & creating the panel!`)
+                                        .color(embedColor)
+                                )
+
+                            // another 3 sec. delay for notice
+                            setTimeout(async () => {
+                                
+                            }, 3000);
+                        } catch(e:any) {
+                            console.error(e);
+                            editEmbed(
+                                setupEmbed
+                                    .title('Oops!')
+                                    .description('Something happened. Please contact the developer on [our community server](https://yapin.gg/invite/qaFqK6zVXp).')
+                                    .color('red'),
+                                false
+                            );
+                            return;
+                        }
+                    }, 3000);
                 } catch(e: any) {
                     if(e instanceof SetupCancelled)
                         return;
@@ -273,6 +316,26 @@ export class Utils extends Cog {
             }
         }
     };
+
+    // Make sure the bot has the correct permissions before running any commands
+    async check(msg: any) {
+        if(!msg.server_id)
+            return true;
+
+        if(!await checkPermissions(
+            this.bot, msg.server_id,
+            ['manage_channels', 'manage_messages', 'embed_links'],
+            {
+                authorId: null,
+                bot: true
+            }
+        )) {
+            msg.reply('**I do not have the proper permissions to work on this server!**\nPlease allow me the following:\n* Manage channels\n* Manage messages\n* Embed links');
+            return false;
+        }
+        
+        return true;
+    }
 
     cogLoad() {
         this.bot.on('setup:cancel', (ev: {

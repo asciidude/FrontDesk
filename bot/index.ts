@@ -1,4 +1,5 @@
 import { Bot } from '../dependencies/yapper';
+import { checkPermissions } from '../utils/checkPermissions';
 import { MessageSwitchboard } from '../utils/MessageSwitchboard';
 
 if(
