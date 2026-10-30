@@ -36,7 +36,7 @@ export class MessageCollector {
     // Run messages thru a filter & check if the collector has ended
     // If not, push to saved & stop when limit is reached
     async processMessage(msg: any) {
-        if(!await this.filter(msg)) return;
+        if(this.filter && !await this.filter(msg)) return;
         if(this.ended) return;
 
         this.saved.push(msg);
