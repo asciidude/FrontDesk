@@ -1,3 +1,4 @@
+import sqlite3, { open, type Database } from 'sqlite';
 import { Bot } from '../dependencies/yapper';
 import { checkPermissions } from '../utils/checkPermissions';
 import { MessageSwitchboard } from '../utils/MessageSwitchboard';
@@ -18,6 +19,15 @@ export let activeSetups = new Map<string, {
 }>();
 
 await bot.loadCogs('./cogs');
+
+export let db: Database;
+
+(async () => {
+    db = await open({
+        filename: '/tmp/database.db',
+        driver: sqlite3.Database
+    });
+});
 
 bot.on('ready', () => {
     bot.setStatus('online', 'Checking for tickets...');
