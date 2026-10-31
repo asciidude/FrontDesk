@@ -9,7 +9,7 @@ You can join our community/support server [here](https://yapin.gg/invite/qaFqK6z
 # Dependencies
 FrontDesk depends on the following libraries:
 * yapper.js - the SDK obtained from [Yapper Developers](https://www.yapper.website/developers), placed in `dependencies` - modified to support TypeScript cogs.
-* sqlite - the database FrontDesk runs on, locally hosted
+* better-sqlite3 - the database FrontDesk runs on, locally hosted
 
 # Running your own instance
 You are allowed to run your own instance of FrontDesk **given you do not use it's name or assets (logo, banners, etc.) in commercial or hobbyist use.**
