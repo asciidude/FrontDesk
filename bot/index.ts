@@ -21,7 +21,40 @@ export let activeSetups = new Map<string, {
 await bot.loadCogs('./cogs');
 
 // Open the database & export it for use across the project
-export const db: DB = new Database(`${__dirname}/db/database.db`);
+export const db: DB = new Database('./db/database.db');
+
+db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
+
+// Initialize db tables
+db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT NOT NULL UNIQUE,
+        active_ticket TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS tickets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_id TEXT NOT NULL UNIQUE,
+        opened_by TEXT NOT NULL,
+        claimed_by TEXT,
+        status TEXT NOT NULL,
+        server_id TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        last_activity_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS servers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_id TEXT NOT NULL UNIQUE,
+        support_roles TEXT NOT NULL DEFAULT '[]',
+        admin_roles TEXT NOT NULL DEFAULT '[]',
+        tickets_panel TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+`);
 
 bot.on('ready', () => {
     bot.setStatus('online', 'Checking for tickets...');
