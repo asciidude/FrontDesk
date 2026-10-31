@@ -7,13 +7,13 @@
   "peerDependencies": {
     "typescript": "^5"
   },
+  "private": true,
   "scripts": {
     "start": "bun run ./bot/index.ts",
     "dev": "bun --watch run ./bot/index.ts"
   },
-  "private": true,
   "type": "module",
   "dependencies": {
-    "sqlite": "^5.1.1"
+    "better-sqlite3": "^13.0.3"
   }
 }
