@@ -1,4 +1,4 @@
-import sqlite3, { open, type Database } from 'sqlite';
+import Database, { type Database as DB } from 'better-sqlite3';
 import { Bot } from '../dependencies/yapper';
 import { checkPermissions } from '../utils/checkPermissions';
 import { MessageSwitchboard } from '../utils/MessageSwitchboard';
@@ -20,14 +20,8 @@ export let activeSetups = new Map<string, {
 
 await bot.loadCogs('./cogs');
 
-export let db: Database;
-
-(async () => {
-    db = await open({
-        filename: '/tmp/database.db',
-        driver: sqlite3.Database
-    });
-});
+// Open the database & export it for use across the project
+export const db: DB = new Database(`${__dirname}/db/database.db`);
 
 bot.on('ready', () => {
     bot.setStatus('online', 'Checking for tickets...');
