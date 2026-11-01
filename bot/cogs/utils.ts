@@ -28,7 +28,7 @@ export class Utils extends Cog {
                 let serverId = msg.server_id;
                 let authorId = msg.author_id;
 
-                if(!await checkPermissions(
+                if (!await checkPermissions(
                     this.bot, serverId,
                     ['administrator'],
                     {
@@ -77,7 +77,7 @@ export class Utils extends Cog {
 
                 const editEmbed = async (embed: Embed, keepButton: boolean = true) => {
                     let opts;
-                    if(!keepButton) {
+                    if (!keepButton) {
                         opts = {
                             embeds: [embed],
                             components: []
@@ -85,7 +85,7 @@ export class Utils extends Cog {
                     } else {
                         opts = { embeds: [embed] }
                     }
-                    
+
                     await this.bot.api(
                         'PATCH',
                         `/channels/${msg.channel_id}/messages/${message.id}`,
@@ -98,8 +98,8 @@ export class Utils extends Cog {
                     if (
                         incomingMsg.id === msg.id
                         || typeof incomingMsg.content !== 'string'
-                        ||!(incomingMsg.author_id === authorId
-                          && incomingMsg.channel_id === msg.channel_id)
+                        || !(incomingMsg.author_id === authorId
+                            && incomingMsg.channel_id === msg.channel_id)
                     ) return false;
                     return true;
                 }
@@ -211,7 +211,7 @@ export class Utils extends Cog {
                         WHERE server_id = ?
                     `).get(serverId);
 
-                    if(!server) {
+                    if (!server) {
                         // Warn user & ask for confirmation
                         await editEmbed(
                             setupEmbed
@@ -221,12 +221,12 @@ export class Utils extends Cog {
                         );
 
                         const confirmRequest = await collectResponse((incomingMsg: any) => {
-                            if(!isAuthor(incomingMsg)) return false;
-                            if(incomingMsg.content.toLowerCase() === 'confirm') return true;
+                            if (!isAuthor(incomingMsg)) return false;
+                            if (incomingMsg.content.toLowerCase() === 'confirm') return true;
                             return false;
                         }, options);
-                        
-                        if(!confirmRequest[0])
+
+                        if (!confirmRequest[0])
                             return;
 
                         // delete all server data
@@ -241,7 +241,7 @@ export class Utils extends Cog {
                                 WHERE server_id = ?
                             `).run(serverId);
 
-                            // panels are automatically handled thru cascade
+                            // panels are automatically handled thru cascade on delete
                         })();
 
                         await editEmbed(
@@ -308,11 +308,11 @@ export class Utils extends Cog {
                             .description(`Successfully registered ${firstChannelRaw} for your first ticket panel.\n\nNow, provide your first ticket panel's:\n 1. name(⭐)\n2. description(⭐)\n3. color\n4. thumbnail image link\n⭐ = required | in that order, seperated by a new line.\n\nExample:\n\`\`\`\nSupport\nRequest a suppoort agent.\n#784FC9\nhttps://i.imgur.com/xlcL6.gif\`\`\``)
                             .color(embedColor)
                     );
-                    
+
                     // PANEL ITSELF
                     const panelInfoResponse = await collectResponse(null, options);
                     const panelInfo = panelInfoResponse[0].content.split('\n').slice(0, 4);
-                    
+
                     // check if panelInfo length is <2 and prompt to enter correct info
 
                     await editEmbed(
@@ -323,36 +323,51 @@ export class Utils extends Cog {
                     );
 
                     // 3 sec. delay for review
-                    setTimeout(async () => {
-                        try {
-                            await this.bot.createCategory(serverId, 'Open Tickets');
-                            await this.bot.createCategory(serverId, 'Closed Tickets');
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    try {
+                        await this.bot.createCategory(serverId, 'Open Tickets');
+                        await this.bot.createCategory(serverId, 'Closed Tickets');
 
-                            await editEmbed(
-                                    setupEmbed
-                                        .title('Guided Setup')
-                                        .description(`I have successfully created the categories.\n\n**I cannot change the permissions in these categories.** You must do it yourself, but make sure I'm allowed to see them otherwise I won't work in your server.\n\nSaving your changes to the database now & creating the panel!`)
-                                        .color(embedColor)
+                        await editEmbed(
+                            setupEmbed
+                                .title('Guided Setup')
+                                .description(`I have successfully created the categories.\n\n**I cannot change the permissions in these categories.** You must do it yourself, but make sure I'm allowed to see them otherwise I won't work in your server.\n\nSaving your changes to the database now & creating the panel!`)
+                                .color(embedColor)
+                        )
+
+                        // another 3 sec. delay for notice
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+
+                        db.transaction(() => {
+                            // prepare insert into servers
+                            db.prepare(`
+                                INSERT INTO servers (
+                                    server_id,
+                                    support_roles,
+                                    admin_roles,
+                                    auto_delete_tickets
                                 )
-
-                            // another 3 sec. delay for notice
-                            setTimeout(async () => {
-                                db
-                            }, 3000);
-                        } catch(e:any) {
-                            console.error(e);
-                            editEmbed(
-                                setupEmbed
-                                    .title('Oops!')
-                                    .description('Something happened. Please contact the developer on [our community server](https://yapin.gg/invite/qaFqK6zVXp).')
-                                    .color('red'),
-                                false
+                                VALUES(?, ?, ?, ?)
+                            `).run(
+                                serverId,
+                                JSON.stringify(supportRoles),
+                                JSON.stringify(adminRoles),
+                                120 // 5 days
                             );
-                            return;
-                        }
-                    }, 3000);
-                } catch(e: any) {
-                    if(e instanceof SetupCancelled)
+                        })();
+                    } catch (e: any) {
+                        console.error(e);
+                        editEmbed(
+                            setupEmbed
+                                .title('Oops!')
+                                .description('Something happened. Please contact the developer on [our community server](https://yapin.gg/invite/qaFqK6zVXp).')
+                                .color('red'),
+                            false
+                        );
+                        return;
+                    }
+                } catch (e: any) {
+                    if (e instanceof SetupCancelled)
                         return;
 
                     editEmbed(setupEmbed, false);
@@ -367,10 +382,10 @@ export class Utils extends Cog {
 
     // Make sure the bot has the correct permissions before running any commands
     async check(msg: any) {
-        if(!msg.server_id)
+        if (!msg.server_id)
             return true;
 
-        if(!await checkPermissions(
+        if (!await checkPermissions(
             this.bot, msg.server_id,
             ['manage_channels', 'manage_messages', 'embed_links'],
             {
@@ -381,7 +396,7 @@ export class Utils extends Cog {
             msg.reply('**I do not have the proper permissions to work on this server!**\nPlease allow me the following:\n* Manage channels\n* Manage messages\n* Embed links');
             return false;
         }
-        
+
         return true;
     }
 
