@@ -31,7 +31,7 @@ db.exec(`
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL UNIQUE,
-        active_ticket TEXT NOT NULL,
+        active_ticket TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -43,7 +43,10 @@ db.exec(`
         status TEXT NOT NULL,
         server_id TEXT NOT NULL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        last_activity_at TEXT DEFAULT CURRENT_TIMESTAMP
+        last_activity_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        
+        FOREIGN KEY (server_id)
+            REFERENCES servers(server_id)
     );
 
     CREATE TABLE IF NOT EXISTS servers (
@@ -51,9 +54,33 @@ db.exec(`
         server_id TEXT NOT NULL UNIQUE,
         support_roles TEXT NOT NULL DEFAULT '[]',
         admin_roles TEXT NOT NULL DEFAULT '[]',
-        tickets_panel TEXT NOT NULL DEFAULT '[]',
+        auto_delete_tickets INTEGER NOT NULL DEFAULT 120, -- 120 hours / 5 days
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS ticket_panels (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        server_id TEXT NOT NULL,
+        message_id TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        color TEXT,
+        thumbnail_url TEXT,
+
+        FOREIGN KEY (server_id)
+            REFERENCES servers(server_id)
+            ON DELETE CASCADE
+    );
+
+    -- Indexes
+    CREATE INDEX IF NOT EXISTS idx_tickets_server
+    ON tickets(server_id);
+
+    CREATE INDEX IF NOT EXISTS idx_tickets_user
+    ON tickets(opened_by);
+
+    CREATE INDEX IF NOT EXISTS idx_panels_server
+    ON ticket_panels(server_id);
 `);
 
 bot.on('ready', () => {

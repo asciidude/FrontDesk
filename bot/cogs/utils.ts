@@ -1,4 +1,4 @@
-import { activeSetups, switchboard } from '..';
+import { activeSetups, db, switchboard } from '..';
 import { Button, Cog, Embed, Row } from '../../dependencies/yapper';
 import { checkPermissions } from '../../utils/checkPermissions';
 import { MessageCollector } from '../../utils/MessageCollector';
@@ -204,6 +204,13 @@ export class Utils extends Cog {
                 };
 
                 try {
+                    // Check if the server already exists in the `servers` table
+                    const server = db.prepare(`
+                        SELECT *
+                        FROM servers
+                        WHERE server_id = ?
+                    `);
+
                     // SUPPORT ROLES
                     const supportResponse = await collectResponse(roleFilter, options);
                     const supportRoles = roleCollection(supportResponse);
@@ -289,7 +296,7 @@ export class Utils extends Cog {
 
                             // another 3 sec. delay for notice
                             setTimeout(async () => {
-                                
+                                db
                             }, 3000);
                         } catch(e:any) {
                             console.error(e);
