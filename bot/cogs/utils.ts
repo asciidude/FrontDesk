@@ -209,7 +209,48 @@ export class Utils extends Cog {
                         SELECT *
                         FROM servers
                         WHERE server_id = ?
-                    `);
+                    `).get(serverId);
+
+                    if(!server) {
+                        // Warn user & ask for confirmation
+                        await editEmbed(
+                            setupEmbed
+                                .title('Oops!')
+                                .description('This server has been found in our database already. You can proceed, but it will reset your entire server, it\'s tickets, and it\'s panels.\n\nType `confirm` if you would like to continue. Otherwise, click "Cancel Setup".')
+                                .color('red')
+                        );
+
+                        const confirmRequest = await collectResponse((incomingMsg: any) => {
+                            if(!isAuthor(incomingMsg)) return false;
+                            if(incomingMsg.content.toLowerCase() === 'confirm') return true;
+                            return false;
+                        }, options);
+                        
+                        if(!confirmRequest[0])
+                            return;
+
+                        // delete all server data
+                        db.transaction(() => {
+                            db.prepare(`
+                                DELETE FROM tickets
+                                WHERE server_id = ?
+                            `).run(serverId);
+
+                            db.prepare(`
+                                DELETE FROM servers
+                                WHERE server_id = ?
+                            `).run(serverId);
+
+                            // panels are automatically handled thru cascade
+                        })();
+
+                        await editEmbed(
+                            setupEmbed
+                                .title('Guided Setup')
+                                .description(`Thank you for choosing FrontDesk, where support is made easy & free.\n\nTo begin your setup, please mention your __support roles__, seperated by spaces.`)
+                                .color(embedColor)
+                        );
+                    }
 
                     // SUPPORT ROLES
                     const supportResponse = await collectResponse(roleFilter, options);

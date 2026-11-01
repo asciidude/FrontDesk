@@ -32,7 +32,11 @@ db.exec(`
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL UNIQUE,
         active_ticket TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+        FOREIGN KEY (active_ticket)
+            REFERENCES tickets(ticket_id)
+            ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS tickets (
@@ -40,7 +44,8 @@ db.exec(`
         ticket_id TEXT NOT NULL UNIQUE,
         opened_by TEXT NOT NULL,
         claimed_by TEXT,
-        status TEXT NOT NULL,
+        status TEXT NOT NULL
+            CHECK (status IN ('open', 'claimed', 'closed')),
         server_id TEXT NOT NULL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         last_activity_at TEXT DEFAULT CURRENT_TIMESTAMP,
