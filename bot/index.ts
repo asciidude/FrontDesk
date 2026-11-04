@@ -80,25 +80,6 @@ db.exec(`
             ON DELETE CASCADE
     );
 
-    CREATE TABLE IF NOT EXISTS dm_inbox (
-        message_id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        channel_id TEXT NOT NULL,
-        content TEXT NOT NULL, -- content is encrypted
-        command TEXT, -- command is also encrypted
-        timestamp INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending'
-            CHECK (status IN ('processing', 'pending', 'sent', 'failed')),
-        attempts INTEGER NOT NULL DEFAULT 0,
-        last_error TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS dm_poll_state (
-        user_id TEXT PRIMARY KEY,
-        last_message_id TEXT,
-        last_polled_at INTEGER
-    );
-
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_tickets_server
     ON tickets(server_id);
@@ -108,20 +89,14 @@ db.exec(`
 
     CREATE INDEX IF NOT EXISTS idx_panels_server
     ON ticket_panels(server_id);
-
-    CREATE INDEX IF NOT EXISTS idx_dm_inbox_status_timestamp
-    ON dm_inbox(status, timestamp);
-
-    CREATE INDEX IF NOT EXISTS idx_dm_inbox_user_timestamp
-    ON dm_inbox(user_id, timestamp);
 `);
 
 bot.on('ready', async () => {
     bot.setStatus('online', 'Checking for tickets...');
 });
 
-bot.on('message', (m:any) => {
-    console.log(m);
+bot.on('dm_message', (m:any) => {
+    
 });
 
 bot.on('interaction', async (i: any) => {
