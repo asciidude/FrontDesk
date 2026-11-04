@@ -59,6 +59,8 @@ db.exec(`
         server_id TEXT NOT NULL UNIQUE,
         support_roles TEXT NOT NULL DEFAULT '[]',
         admin_roles TEXT NOT NULL DEFAULT '[]',
+        open_ticket_category TEXT NOT NULL,
+        closed_ticket_category TEXT NOT NULL,
         auto_delete_tickets INTEGER NOT NULL DEFAULT 120, -- 120 hours / 5 days
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -66,6 +68,7 @@ db.exec(`
     CREATE TABLE IF NOT EXISTS ticket_panels (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         server_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
         message_id TEXT NOT NULL UNIQUE,
         title TEXT NOT NULL,
         description TEXT NOT NULL,
@@ -88,8 +91,10 @@ db.exec(`
     ON ticket_panels(server_id);
 `);
 
-bot.on('ready', () => {
+bot.on('ready', async () => {
     bot.setStatus('online', 'Checking for tickets...');
+
+    
 });
 
 bot.on('interaction', async (i: any) => {

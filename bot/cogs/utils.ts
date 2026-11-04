@@ -114,7 +114,7 @@ export class Utils extends Cog {
                     const isValidMentions = parts.every((part: string) => mentionRegex.test(part));
 
                     if (!isValidMentions) {
-                        editEmbed(
+                        await editEmbed(
                             setupEmbed
                                 .title('Oops!')
                                 .description('Please be sure to seperate role mentions by spaces and __only__ include role **mentions**.\n\nPlease **retype your message**.')
@@ -176,15 +176,17 @@ export class Utils extends Cog {
                                 if (cancelled)
                                     return;
 
-                                if (await checkTimeout(messages))
+                                if (await checkTimeout(messages)) {
+                                    reject(new Error('Setup timed out'));
                                     return;
+                                }
 
                                 resolve(messages);
                             }
                         );
 
-                        cancelCollector = () => {
-                            editEmbed(
+                        cancelCollector = async () => {
+                            await editEmbed(
                                 setupEmbed
                                     .title('Setup cancelled')
                                     .description('You have cancelled guided setup for FrontDesk.')
@@ -205,13 +207,13 @@ export class Utils extends Cog {
 
                 try {
                     // Check if the server already exists in the `servers` table
-                    const server = db.prepare(`
+                    const server: any = db.prepare(`
                         SELECT *
                         FROM servers
                         WHERE server_id = ?
                     `).get(serverId);
 
-                    if (!server) {
+                    if (server) {
                         // Warn user & ask for confirmation
                         await editEmbed(
                             setupEmbed
@@ -228,6 +230,21 @@ export class Utils extends Cog {
 
                         if (!confirmRequest[0])
                             return;
+                        
+                        // Delete panel messages
+                        const panels: any[] = db.prepare(`
+                            SELECT *
+                            FROM ticket_panels
+                            WHERE server_id = ?
+                        `).all(serverId);
+
+                        for(const panel of panels) {
+                            await this.bot.delete(panel.channel_id, panel.message_id)
+                        }
+
+                        // Delete open/closed ticket categories
+                        await this.bot.deleteCategory(serverId, server.open_ticket_category);
+                        await this.bot.deleteCategory(serverId, server.closed_ticket_category);
 
                         // delete all server data
                         db.transaction(() => {
@@ -300,7 +317,7 @@ export class Utils extends Cog {
 
                     // PANEL CHANNEL
                     const firstChannelRaw = panelResponse[0].content.split(/\s+/)[0];
-                    const panelId = firstChannelRaw.slice(2, -1);
+                    const panelChannelId = firstChannelRaw.slice(2, -1);
 
                     await editEmbed(
                         setupEmbed
@@ -310,23 +327,113 @@ export class Utils extends Cog {
                     );
 
                     // PANEL ITSELF
-                    const panelInfoResponse = await collectResponse(null, options);
-                    const panelInfo = panelInfoResponse[0].content.split('\n').slice(0, 4);
+                    let panelInfo: {
+                        message: any,
+                        name: string,
+                        description: string,
+                        color: string | null,
+                        thumbnail: string | null
+                    };
 
-                    // check if panelInfo length is <2 and prompt to enter correct info
+                    while(true) {
+                        const response = await collectResponse((m:any) => isAuthor(m), options);
+                        const parts = response[0].content.split('\n').map((ln:string) => ln.trim());
+                        
+                        const [name, description, color, thumbnail] = parts;
+                        const errors: string[] = [];
+
+                        if(!name || !description) {
+                            errors.push('Panel name and description are required.')
+                        }
+
+                        if(color && !/^#[0-9A-Fa-f]{6}$/.test(color)) {
+                            errors.push('Panel color is invalid, please use HEX format (e.g. #784FC9)');
+                        }
+
+                        if (thumbnail) {
+                            try {
+                                const url = new URL(thumbnail);
+
+                                if (!['http:', 'https:'].includes(url.protocol)) {
+                                    errors.push('Thumbnail must use HTTP or HTTPS.');
+                                }
+                            } catch {
+                                errors.push('Invalid thumbnail URL. Please provide a valid URL!');
+                            }
+                        }
+
+                        if(errors.length === 0) {
+                            const message = await this.bot.send(panelChannelId, '', {
+                                embeds: [
+                                    new Embed({
+                                        title: name,
+                                        description,
+                                        color: color ?? undefined,
+                                        image: thumbnail ?? undefined,
+                                        footer: {
+                                            text: 'FrontDesk by asciixd'
+                                        },
+                                        timestamp: new Date()
+                                    })
+                                ]
+                            });
+
+                            try {
+                                await this.bot.api(
+                                    'PATCH',
+                                    `/channels/${panelChannelId}/messages/${message.id}`,
+                                    {
+                                        components: [
+                                            new Row(
+                                                Button.success(
+                                                    'Open Ticket',
+                                                    `tickets:open_${message.id}`
+                                                ).emoji('🎫')
+                                            )
+                                        ]
+                                    }
+                                );
+                            } catch (error) {
+                                await this.bot.delete(panelChannelId, message.id).catch(console.error);
+                                throw error;
+                            }
+
+                            panelInfo = {
+                                message: message.id,
+                                name, description, color, thumbnail
+                            };
+
+                            break;
+                        } else {
+                            await editEmbed(
+                                setupEmbed
+                                    .title('Oops!')
+                                    .description(`${errors.map(e => `- ${e}`).join('\n')}\n\nPlease provide the panel information again.`)
+                                    .color('red')
+                            );
+                        }
+                    }
+
+                    const panelSummary = [
+                        panelInfo.name,
+                        panelInfo.description,
+                        panelInfo.color,
+                        panelInfo.thumbnail
+                    ].filter(Boolean).join('\n');
 
                     await editEmbed(
                         setupEmbed
                             .title('Guided Setup')
-                            .description(`Successfully registered the information for your first ticket panel.\n\nReview it here:\n\`\`\`\n${panelInfo.join('\n')}\`\`\`\n\nCreating open/closed ticket categories now.`)
+                            .description(`Successfully registered the information for your first ticket panel.\n\nReview it here:\n\`\`\`\n${panelSummary}\`\`\`\n\nCreating open/closed ticket categories now.`)
                             .color(embedColor)
                     );
 
                     // 3 sec. delay for review
                     await new Promise(resolve => setTimeout(resolve, 3000));
+                    
                     try {
-                        await this.bot.createCategory(serverId, 'Open Tickets');
-                        await this.bot.createCategory(serverId, 'Closed Tickets');
+                        const openTicketCat = await this.bot.createCategory(serverId, 'Open Tickets');
+                        const closedTicketCat = await this.bot.createCategory(serverId, 'Closed Tickets');
 
                         await editEmbed(
                             setupEmbed
@@ -339,25 +446,55 @@ export class Utils extends Cog {
                         await new Promise(resolve => setTimeout(resolve, 3000));
 
                         db.transaction(() => {
-                            // prepare insert into servers
+                            // insert server, setup user, and ticket panel into database
+                            // transactionally, so if one error occurs it's not too far gone
+
                             db.prepare(`
                                 INSERT INTO servers (
                                     server_id,
                                     support_roles,
                                     admin_roles,
-                                    auto_delete_tickets
+                                    open_ticket_category,
+                                    closed_ticket_category
                                 )
-                                VALUES(?, ?, ?, ?)
+                                VALUES(?, ?, ?, ?, ?)
                             `).run(
                                 serverId,
                                 JSON.stringify(supportRoles),
                                 JSON.stringify(adminRoles),
-                                120 // 5 days
+                                openTicketCat.id,
+                                closedTicketCat.id
+                            );
+
+                            db.prepare(`
+                                INSERT OR IGNORE INTO users (user_id)
+                                VALUES(?)
+                            `).run(authorId);
+
+                            db.prepare(`
+                                INSERT INTO ticket_panels (
+                                    server_id,
+                                    channel_id,
+                                    message_id,
+                                    title,
+                                    description,
+                                    color,
+                                    thumbnail_url
+                                )
+                                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                            `).run(
+                                serverId,
+                                panelChannelId,
+                                panelInfo.message,
+                                panelInfo.name,
+                                panelInfo.description,
+                                panelInfo.color,
+                                panelInfo.thumbnail
                             );
                         })();
                     } catch (e: any) {
                         console.error(e);
-                        editEmbed(
+                        await editEmbed(
                             setupEmbed
                                 .title('Oops!')
                                 .description('Something happened. Please contact the developer on [our community server](https://yapin.gg/invite/qaFqK6zVXp).')
@@ -370,10 +507,10 @@ export class Utils extends Cog {
                     if (e instanceof SetupCancelled)
                         return;
 
-                    editEmbed(setupEmbed, false);
+                    await editEmbed(setupEmbed, false);
                     throw e;
                 } finally {
-                    editEmbed(setupEmbed, false);
+                    await editEmbed(setupEmbed, false);
                     activeSetups.delete(serverId);
                 }
             }
