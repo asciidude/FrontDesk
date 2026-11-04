@@ -481,7 +481,7 @@ export class Utils extends Cog {
                                     color,
                                     thumbnail_url
                                 )
-                                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                                VALUES(?, ?, ?, ?, ?, ?, ?)
                             `).run(
                                 serverId,
                                 panelChannelId,
@@ -492,6 +492,14 @@ export class Utils extends Cog {
                                 panelInfo.thumbnail
                             );
                         })();
+
+                        await editEmbed(
+                            setupEmbed
+                                .title('Guided Setup')
+                                .description('Setup complete! Check out our other commands with `/help`.\nThank you for using FrontDesk.')
+                                .color(embedColor),
+                            false
+                        )
                     } catch (e: any) {
                         console.error(e);
                         await editEmbed(
