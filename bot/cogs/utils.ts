@@ -247,8 +247,12 @@ export class Utils extends Cog {
                         }
 
                         // Delete open/closed ticket categories
-                        await this.bot.deleteCategory(serverId, server.open_ticket_category);
-                        await this.bot.deleteCategory(serverId, server.closed_ticket_category);
+                        try {
+                            await this.bot.deleteCategory(serverId, server.open_ticket_category);
+                            await this.bot.deleteCategory(serverId, server.closed_ticket_category);
+                        } catch(e: any) {
+                            console.error(e);
+                        }
 
                         // delete all server data
                         db.transaction(() => {
@@ -436,21 +440,9 @@ export class Utils extends Cog {
                     await new Promise(resolve => setTimeout(resolve, 3000));
                     
                     try {
-                        let ticketCategories: {
-                            open: string,
-                            close: string
-                        };
-
-                        try {
-                            const openTicketCat = await this.bot.createCategory(serverId, 'Open Tickets');
-                            const closedTicketCat = await this.bot.createCategory(serverId, 'Closed Tickets');
-
-                            ticketCategories = {
-                                open: openTicketCat.id,
-                                close: closedTicketCat.id
-                            }
-                        } catch(e: any) {
-                            console.error(e);
+                        let ticketCategories = {
+                            open: await this.bot.createCategory(serverId, 'Open Tickets').id,
+                            close: await this.bot.createCategory(serverId, 'Closed Tickets').id
                         }
 
                         await editEmbed(
