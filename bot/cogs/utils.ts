@@ -239,7 +239,11 @@ export class Utils extends Cog {
                         `).all(serverId);
 
                         for(const panel of panels) {
-                            await this.bot.delete(panel.channel_id, panel.message_id)
+                            try{
+                                await this.bot.delete(panel.channel_id, panel.message_id)
+                            } catch(err: any) {
+                                console.error(err);
+                            }
                         }
 
                         // Delete open/closed ticket categories
@@ -432,8 +436,22 @@ export class Utils extends Cog {
                     await new Promise(resolve => setTimeout(resolve, 3000));
                     
                     try {
-                        const openTicketCat = await this.bot.createCategory(serverId, 'Open Tickets');
-                        const closedTicketCat = await this.bot.createCategory(serverId, 'Closed Tickets');
+                        let ticketCategories: {
+                            open: string,
+                            close: string
+                        };
+
+                        try {
+                            const openTicketCat = await this.bot.createCategory(serverId, 'Open Tickets');
+                            const closedTicketCat = await this.bot.createCategory(serverId, 'Closed Tickets');
+
+                            ticketCategories = {
+                                open: openTicketCat.id,
+                                close: closedTicketCat.id
+                            }
+                        } catch(e: any) {
+                            console.error(e);
+                        }
 
                         await editEmbed(
                             setupEmbed
@@ -462,8 +480,8 @@ export class Utils extends Cog {
                                 serverId,
                                 JSON.stringify(supportRoles),
                                 JSON.stringify(adminRoles),
-                                openTicketCat.id,
-                                closedTicketCat.id
+                                ticketCategories.open,
+                                ticketCategories.close
                             );
 
                             db.prepare(`
