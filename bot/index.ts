@@ -95,7 +95,7 @@ bot.on('ready', async () => {
     bot.setStatus('online', 'Checking for tickets...');
 });
 
-bot.on('dm_message', (m:any) => {
+bot.on('dm_message', (msg: any) => {
     
 });
 
