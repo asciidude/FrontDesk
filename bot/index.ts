@@ -96,6 +96,8 @@ bot.on('ready', async () => {
 });
 
 bot.on('dm_message', (msg: any) => {
+    // TODO: parse commands and run cogs
+    // if the message does not start with "/", transmit as a message
     
 });
 
