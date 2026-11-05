@@ -150,9 +150,9 @@ bot.on('interaction', async (i: any) => {
                 ticket = await createTicket(bot, ticketPanel.server_id, userId);
             } catch(e:any) {
                 i.ephemeral(`I don't have the correct permissions! Please ping an admin and ask them to give me \`Manage Channels\`, \`Manage Server\`, and \`Mention Everyone\` permissions.`);
+                return;
             }
 
-            if(!ticket) return;
             if(!ticket.updatedUser && ticket.ticketId) {
                 bot.dmSend(
                     userId,
