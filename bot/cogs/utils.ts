@@ -207,6 +207,14 @@ export class Utils extends Cog {
                     });
                 };
 
+                let setupResources = {
+                    categories: [] as string[],
+                    messages: [] as {
+                        channelId: string;
+                        messageId: string;
+                    }[]
+                }
+
                 try {
                     // Check if the server already exists in the `servers` table
                     const server: any = db.prepare(`
@@ -389,6 +397,11 @@ export class Utils extends Cog {
                                 ]
                             });
 
+                            setupResources.messages.push({
+                                channelId: panelChannelId,
+                                messageId: message.id
+                            });
+
                             try {
                                 await this.bot.api(
                                     'PATCH',
@@ -443,10 +456,11 @@ export class Utils extends Cog {
                     await new Promise(resolve => setTimeout(resolve, 3000));
                     
                     try {
-                        let ticketCategories = {
-                            open: (await this.bot.createCategory(serverId, 'Open Tickets')).id,
-                            close: (await this.bot.createCategory(serverId, 'Closed Tickets')).id
-                        }
+                        const openCategory = await this.bot.createCategory(serverId, 'Open Tickets');
+                        setupResources.categories.push(openCategory.id);
+
+                        const closedCategory = await this.bot.createCategory(serverId, 'Closed Tickets');
+                        setupResources.categories.push(closedCategory.id);
 
                         await editEmbed(
                             setupEmbed
@@ -475,8 +489,8 @@ export class Utils extends Cog {
                                 serverId,
                                 JSON.stringify(supportRoles),
                                 JSON.stringify(adminRoles),
-                                ticketCategories.open,
-                                ticketCategories.close
+                                openCategory.id,
+                                closedCategory.id
                             );
 
                             db.prepare(`
@@ -515,6 +529,23 @@ export class Utils extends Cog {
                         )
                     } catch (e: any) {
                         console.error(e);
+
+                        for(const message of setupResources.messages) {
+                            try {
+                                await this.bot.delete(message.channelId, message.messageId);
+                            } catch(e:any) {
+                                console.error(e);
+                            }
+                        }
+
+                        for(const categoryId of setupResources.categories) {
+                            try {
+                                await this.bot.deleteCategory(serverId, categoryId);
+                            } catch(e:any) {
+                                console.error(e);
+                            }
+                        }
+
                         await editEmbed(
                             setupEmbed
                                 .title('Oops!')
@@ -522,6 +553,7 @@ export class Utils extends Cog {
                                 .color('red'),
                             false
                         );
+                        
                         return;
                     }
                 } catch (e: any) {
