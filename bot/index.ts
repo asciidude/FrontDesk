@@ -167,7 +167,8 @@ bot.on('interaction', async (i: any) => {
                                 footer: {
                                     text: 'FrontDesk by asciixd',
                                     icon_url: process.env.ICON_URL
-                                }
+                                },
+                                timestamp: new Date()
                             })
                         ]
                     }
@@ -188,7 +189,8 @@ bot.on('interaction', async (i: any) => {
                                 footer: {
                                     text: 'FrontDesk by asciixd',
                                     icon_url: process.env.ICON_URL
-                                }
+                                },
+                                timestamp: new Date()
                             })
                         ]
                     }
