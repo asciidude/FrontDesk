@@ -6,6 +6,6 @@ export class Utils extends Cog {
     };
     
     cogLoad() {
-        console.log('[COGS] DM commands loaded.')
+        console.log('[COGS] Ticket commands loaded.')
     };
 }

@@ -96,6 +96,7 @@ bot.on('ready', async () => {
 });
 
 bot.on('dm_message', (msg: any) => {
+    if(!msg.content?.trim()) return; // only parse valid messages
     const args = msg.content.split(/\s+/);
     if(args[0].startsWith('/')) {
         // Parse command as and execute cog, if no cog found, reply with "command not found"
@@ -126,6 +127,10 @@ bot.on('interaction', async (i: any) => {
         });
 
         i.ack();
+    }
+
+    if (i.custom_id.startsWith('tickets:open_')) {
+        // TODO: extract the message id and find the ticket panel, open a new ticket with that info
     }
 });
 
