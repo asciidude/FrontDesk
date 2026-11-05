@@ -594,7 +594,7 @@ export class Bot {
   }
 
   // ---- channels ----
-  async createChannel(serverId, name, { kind = 'text', categoryId } = {}) { return (await this.api('POST', `/servers/${serverId}/channels`, { name, kind, category_id: categoryId })).channel; }
+  async createChannel(serverId, name, { kind = 'text', categoryId = null } = {}) { return (await this.api('POST', `/servers/${serverId}/channels`, { name, kind, category_id: categoryId })).channel; }
   /** Change a channel: { name, categoryId, private, roleIds, readOnly, postRoleIds, slowmode }. */
   async editChannel(channelId, changes = {}) {
     const { name, categoryId, private: priv, roleIds, readOnly, postRoleIds, slowmode } = changes;
