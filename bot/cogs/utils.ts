@@ -61,7 +61,7 @@ export class Utils extends Cog {
                     color: embedColor,
                     footer: {
                         text: 'FrontDesk by asciixd',
-                        icon: process.env.ICON_URL
+                        icon_url: process.env.ICON_URL
                     },
                     timestamp: new Date()
                 });
@@ -378,11 +378,11 @@ export class Utils extends Cog {
                                     new Embed({
                                         title: name,
                                         description,
-                                        color: color ?? undefined,
-                                        image: thumbnail ?? undefined,
+                                        color: color,
+                                        image: thumbnail,
                                         footer: {
                                             text: 'FrontDesk by asciixd',
-                                            icon: process.env.ICON_URL
+                                            icon_url: process.env.ICON_URL
                                         },
                                         timestamp: new Date()
                                     })
