@@ -2,6 +2,7 @@ import Database, { type Database as DB } from 'better-sqlite3';
 import { Bot, Embed } from '../dependencies/yapper';
 import { checkPermissions } from '../utils/checkPermissions';
 import { MessageSwitchboard } from '../utils/MessageSwitchboard';
+import { createTicket } from '../utils/createTicket';
 
 if(
     process.env.NODE_ENV !== 'production'
@@ -47,6 +48,7 @@ db.exec(`
         status TEXT NOT NULL
             CHECK (status IN ('open', 'claimed', 'closed')),
         server_id TEXT NOT NULL,
+        channel_id TEXT NOT NULL,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         last_activity_at TEXT DEFAULT CURRENT_TIMESTAMP,
         
@@ -130,35 +132,78 @@ bot.on('interaction', async (i: any) => {
     }
 
     if (i.custom_id.startsWith('tickets:open_')) {
-        // TODO: extract the message id and find the ticket panel, open a new ticket with that info
+        const id = i.custom_id.slice('tickets:open_'.length);
+        const userId = i.user_id;
 
         const ticketPanel: any = db.prepare(`
-            SELECT * FROM ticket_panels
-            FROM message_id = ?
-        `).get(i.custom_id.slice('tickets:open_'.length));
+            SELECT *
+            FROM ticket_panels
+            WHERE message_id = ?
+        `).get(id);
 
-        if(!ticketPanel) return; // allows interaction to fail
+        if(!ticketPanel) return;
 
-        bot.dmSend(
-            i.user_id,
-            'A new ticket has been opened.',
-            {
-                embeds: [
-                    new Embed({
-                        title: ticketPanel.name,
-                        description: ticketPanel.description,
-                        color: ticketPanel.color,
-                        image: ticketPanel.thumbnail,
-                        footer: {
-                            text: 'FrontDesk by asciixd',
-                            image: process.env.ICON_URL
-                        }
-                    })
-                ]
+        try {
+            let ticket;
+            
+            try {
+                ticket = await createTicket(bot, ticketPanel.server_id, userId);
+            } catch(e:any) {
+                i.ephemeral(`I don't have the correct permissions! Please ping an admin and ask them to give me \`Manage Channels\`, \`Manage Server\`, and \`Mention Everyone\` permissions.`);
             }
-        );
+
+            if(!ticket) return;
+            if(!ticket.updatedUser && ticket.ticketId) {
+                bot.dmSend(
+                    userId,
+                    `A new ticket has been opened. To switch to it, run \`/switch ${ticket.ticketId}\`.`,
+                    {
+                        embeds: [
+                            new Embed({
+                                title: ticketPanel.title,
+                                description: ticketPanel.description,
+                                color: ticketPanel.color,
+                                image: ticketPanel.thumbnail,
+                                footer: {
+                                    text: 'FrontDesk by asciixd',
+                                    icon_url: process.env.ICON_URL
+                                }
+                            })
+                        ]
+                    }
+                );
+
+                i.ack();
+            } else if(ticket.updatedUser && ticket.ticketId) {
+                bot.dmSend(
+                    userId,
+                    `A new ticket has been opened, it has been automatically selected.\n\n-# **To switch tickets,** please use \`/switch (ticket ID)\`.\n-# **To view tickets (and their IDs),** do \`/tickets\`.`,
+                    {
+                        embeds: [
+                            new Embed({
+                                title: ticketPanel.title,
+                                description: ticketPanel.description,
+                                color: ticketPanel.color,
+                                image: ticketPanel.thumbnail,
+                                footer: {
+                                    text: 'FrontDesk by asciixd',
+                                    icon_url: process.env.ICON_URL
+                                }
+                            })
+                        ]
+                    }
+                );
+
+                i.ack();
+            }
+        } catch(e: any) {
+            console.error(e);
+        }
     }
 });
+
+// check delete channel, if it is a ticket channel search for that ticket id (extract from ticket-tid)
+// then delete ticket with deleteTicket util
 
 bot.start().catch((e:any) => {
     // well shit

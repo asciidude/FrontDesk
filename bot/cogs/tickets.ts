@@ -2,7 +2,7 @@ import { Cog } from '../../dependencies/yapper';
 
 export class Utils extends Cog {
     commands = {
-        // TODO
+        // TODO: /claim, /close <reason>
     };
     
     cogLoad() {
