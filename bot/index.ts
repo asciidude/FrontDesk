@@ -96,9 +96,22 @@ bot.on('ready', async () => {
 });
 
 bot.on('dm_message', (msg: any) => {
-    // TODO: parse commands and run cogs
-    // if the message does not start with "/", transmit as a message
-    
+    const args = msg.content.split(/\s+/);
+    if(args[0].startsWith('/')) {
+        // Parse command as and execute cog, if no cog found, reply with "command not found"
+        const commandName = args[0].slice(1);
+        const command = bot.cogs.get(commandName);
+        
+        if(!command || command.serverOnly) {
+            bot.dmSend(msg.author_id, `Command \`/${commandName}\` not found or the command is exclusively for servers.`);
+            return;
+        }
+
+        command.run(); // TODO
+    } else {
+        // Transmit message to active ticket. If no ticket is selected, reply with "ticket not found"
+        // TODO
+    }
 });
 
 bot.on('interaction', async (i: any) => {
