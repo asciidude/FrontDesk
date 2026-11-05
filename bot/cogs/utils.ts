@@ -444,8 +444,8 @@ export class Utils extends Cog {
                     
                     try {
                         let ticketCategories = {
-                            open: await this.bot.createCategory(serverId, 'Open Tickets').id,
-                            close: await this.bot.createCategory(serverId, 'Closed Tickets').id
+                            open: (await this.bot.createCategory(serverId, 'Open Tickets')).id,
+                            close: (await this.bot.createCategory(serverId, 'Closed Tickets')).id
                         }
 
                         await editEmbed(
