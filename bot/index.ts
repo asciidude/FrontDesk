@@ -1,5 +1,5 @@
 import Database, { type Database as DB } from 'better-sqlite3';
-import { Bot } from '../dependencies/yapper';
+import { Bot, Embed } from '../dependencies/yapper';
 import { checkPermissions } from '../utils/checkPermissions';
 import { MessageSwitchboard } from '../utils/MessageSwitchboard';
 
@@ -131,6 +131,32 @@ bot.on('interaction', async (i: any) => {
 
     if (i.custom_id.startsWith('tickets:open_')) {
         // TODO: extract the message id and find the ticket panel, open a new ticket with that info
+
+        const ticketPanel: any = db.prepare(`
+            SELECT * FROM ticket_panels
+            FROM message_id = ?
+        `).get(i.custom_id.slice('tickets:open_'.length));
+
+        if(!ticketPanel) return; // allows interaction to fail
+
+        bot.dmSend(
+            i.user_id,
+            'A new ticket has been opened.',
+            {
+                embeds: [
+                    new Embed({
+                        title: ticketPanel.name,
+                        description: ticketPanel.description,
+                        color: ticketPanel.color,
+                        image: ticketPanel.thumbnail,
+                        footer: {
+                            text: 'FrontDesk by asciixd',
+                            image: process.env.ICON_URL
+                        }
+                    })
+                ]
+            }
+        );
     }
 });
 

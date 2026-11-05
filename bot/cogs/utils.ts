@@ -60,7 +60,8 @@ export class Utils extends Cog {
                     description: 'Thank you for choosing FrontDesk, where support is made easy & free.\n\nTo begin your setup, please mention your __support roles__, seperated by spaces.',
                     color: embedColor,
                     footer: {
-                        'text': 'FrontDesk by asciixd'
+                        'text': 'FrontDesk by asciixd',
+                        'image': process.env.ICON_URL
                     },
                     timestamp: new Date()
                 });
