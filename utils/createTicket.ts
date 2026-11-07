@@ -2,19 +2,23 @@ import { randomBytes } from "node:crypto";
 import { db } from "../bot";
 import type Bot from "../dependencies/yapper.js";
 import { checkPermissions } from "./checkPermissions";
+import { Embed } from "../dependencies/yapper.js";
 
 /**
  * Create a ticket
  * @param bot The bot object
  * @param serverId The server ID
  * @param userId The user ID
+ * @param panelName The panel name
  * @returns 
  */
 export async function createTicket(
     bot: Bot,
-    serverId: string,
-    userId: string
+    userId: string,
+    panel: any
 ) {
+    const serverId = panel.server_id;
+
     const hasPermissions = await checkPermissions(
         bot,
         serverId,
@@ -86,7 +90,19 @@ export async function createTicket(
             VALUES (?, ?, ?, 'open', ?)
         `).run(ticketId, channel.id, userId, serverId);
 
-        bot.send(channelId, supportRoles.map(roleId => `<@&${roleId}>`).join(' '));
+        bot.send(
+            channelId,
+            supportRoles.map(roleId => `<@&${roleId}>`).join(' '),
+            {
+                embeds: [
+                    new Embed({
+                        title: panel.title,
+                        description: `New ticket opened by <@${userId}>`,
+                        color: panel.color
+                    })
+                ]
+            }
+        );
 
         if (!user.active_ticket) {
             db.prepare(`
@@ -96,7 +112,7 @@ export async function createTicket(
                 AND active_ticket IS NULL;
             `).run(ticketId, userId);
 
-            console.log(`[DEBUG] Opened ticket ${ticketId} | User NOT updated`)
+            console.log(`[DEBUG] Opened ticket ${ticketId} | User updated`)
 
             return {
                 ticketId,
@@ -104,7 +120,7 @@ export async function createTicket(
             };
         }
 
-        console.log(`[DEBUG] Opened ticket ${ticketId} | User updated`)
+        console.log(`[DEBUG] Opened ticket ${ticketId} | User NOT updated`)
 
         return {
             ticketId,

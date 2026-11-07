@@ -13,7 +13,7 @@ export class Utils extends Cog {
         close: {
             description: 'Close the ticket, with an optional reason. Support/admin roles & ticket user only.',
             run: async (msg: any) => {
-
+                
             }
         },
         

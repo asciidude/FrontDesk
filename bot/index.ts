@@ -3,6 +3,7 @@ import { Bot, Embed } from '../dependencies/yapper.js';
 import { checkPermissions } from '../utils/checkPermissions';
 import { MessageSwitchboard } from '../utils/MessageSwitchboard';
 import { createTicket } from '../utils/createTicket';
+import { closeTicket } from '../utils/closeTicket.js';
 
 if(
     process.env.NODE_ENV !== 'production'
@@ -98,7 +99,50 @@ db.exec(`
 `);
 
 bot.on('ready', async () => {
-    bot.setStatus('online', 'Checking for tickets...');
+    bot.setStatus('online', 'Looking for tickets...');
+
+    // check every 5 seconds for channel deletion | TODO: stagger api calls
+    setInterval(async () => {
+        const servers: any[] = db.prepare(`
+            SELECT server_id
+            FROM servers
+        `).all();
+
+        for(const server of servers) {
+            try {
+                const tickets: any[] = db.prepare(`
+                    SELECT ticket_id, channel_id
+                    FROM tickets
+                    WHERE server_id = ?
+                `).all(server.server_id);
+
+                if(!tickets.length) return;
+
+                const channels = await bot.channels(server.server_id);
+
+                for (const ticket of tickets) {
+                    const channelExists = channels.some(
+                        (channel: any) => channel.id === ticket.channel_id
+                    );
+
+                    // if the channel was deleted, delete it from the database
+                    if(!channelExists) {
+                        await closeTicket(
+                            bot,
+                            server.server_id,
+                            ticket.ticket_id,
+                            'Closed by staff (channel delete)',
+                            true
+                        );
+
+                        console.log(`[DEBUG] Ticket ${ticket.ticket_id} deleted.`)
+                    }
+                }
+            } catch(e: any) {
+                console.error(e);
+            }
+        }
+    }, 5000);
 });
 
 bot.on('dm_message', (msg: any) => {
@@ -137,6 +181,7 @@ bot.on('interaction', async (i: any) => {
     }
 
     if (i.custom_id.startsWith('tickets:open_')) {
+
         const id = i.custom_id.slice('tickets:open_'.length);
         const userId = i.user_id;
 
@@ -152,7 +197,7 @@ bot.on('interaction', async (i: any) => {
             let ticket;
             
             try {
-                ticket = await createTicket(bot, ticketPanel.server_id, userId);
+                ticket = await createTicket(bot, userId, ticketPanel);
             } catch(e:any) {
                 i.ephemeral(`I don't have the correct permissions! Please ping an admin and ask them to give me \`Manage Channels\`, \`Manage Server\`, and \`Mention Everyone\` permissions.`);
                 return;
@@ -178,7 +223,6 @@ bot.on('interaction', async (i: any) => {
                         ]
                     }
                 );
-
                 i.ack();
             } else if(ticket.updatedUser && ticket.ticketId) {
                 bot.dmSend(
@@ -200,7 +244,6 @@ bot.on('interaction', async (i: any) => {
                         ]
                     }
                 );
-
                 i.ack();
             }
         } catch(e: any) {
@@ -208,9 +251,6 @@ bot.on('interaction', async (i: any) => {
         }
     }
 });
-
-// check delete channel, if it is a ticket channel search for that ticket id (extract from ticket-tid)
-// then delete ticket with deleteTicket util
 
 bot.start().catch((e:any) => {
     // well shit
