@@ -323,9 +323,13 @@ bot.on('interaction', async (i: any) => {
             SELECT *
             FROM ticket_panels
             WHERE message_id = ?
-        `).get(id);
+            AND server_id = ?
+        `).get(id, serverId);
 
-        if(!ticketPanel) return;
+        if(!ticketPanel) {
+            i.ephemeral('This ticket panel was not found within our database. Please ask a server admin to remove it.');
+            return;
+        }
 
         try {
             let ticket;
