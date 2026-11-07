@@ -1,6 +1,5 @@
 import Database, { type Database as DB } from 'better-sqlite3';
 import { Bot, Embed } from '../dependencies/yapper.js';
-import { checkPermissions } from '../utils/checkPermissions';
 import { MessageSwitchboard } from '../utils/MessageSwitchboard';
 import { createTicket } from '../utils/createTicket';
 import { closeTicket } from '../utils/closeTicket.js';
