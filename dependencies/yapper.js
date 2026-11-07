@@ -1219,6 +1219,9 @@ export class Bot {
           }
         }
       }
+      void this.emit('message', msg).catch(e => {
+        console.error('[yapper] Message event listener failed:', e);
+      });
     } else if (ev.type === 'command') {
       // A slash command picked from the / menu (flag bot_slash_interactions): nothing was posted in chat. msg works
       // like a command message; msg.reply answers it (shown with "<user> used /cmd"), msg.ephemeral only to them.

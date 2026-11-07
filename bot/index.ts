@@ -192,6 +192,7 @@ bot.on('dm_message', (msg: any) => {
 
 bot.on('message', (msg: any) => {
     // Transmit message (server -> dms)
+    console.log(msg);
 });
 
 bot.on('interaction', async (i: any) => {
