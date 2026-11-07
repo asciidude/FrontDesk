@@ -223,7 +223,7 @@ export class Bot {
   /** Register a command. People type /name or !name; the composer suggests it. */
   command(name, description, fn) { return this.#addCommand(name, description, fn, null, null); }
 
-  #addCommand(name, description, fn, owner, check) {
+  #addCommand(name, description, fn, owner, check, options = {}) {
     if (typeof description === 'function') { fn = description; description = ''; }
     const n = String(name).toLowerCase().replace(/^[/!]/, '');
     if (!/^[a-z0-9_-]{1,32}$/.test(n)) throw new Error(`Bad command name "${name}": letters, numbers, - and _ only`);
@@ -235,7 +235,14 @@ export class Bot {
       throw new Error(`Command /${n} is in both ${where(old.owner)} and ${where(owner)}. Rename one of them.`);
     }
     if (!old && this.commands.size >= COMMAND_LIMIT) throw new Error(`Up to ${COMMAND_LIMIT} commands per bot, /${n} is one too many`);
-    this.commands.set(n, { description: String(description || '').slice(0, 100), fn, owner, check });
+    this.commands.set(n, {
+      description: String(description || '').slice(0, 100),
+      fn,
+      owner,
+      check,
+      serverOnly: options.serverOnly === true,
+      dmOnly: options.dmOnly === true
+    });
     if (owner) owner.cmds.add(n);
     this.#syncSoon();
     return this;
@@ -384,7 +391,14 @@ export class Bot {
     for (const [n, c] of Object.entries(cog.commands || {})) {
       const run = typeof c === 'function' ? c : c?.run;
       if (typeof run !== 'function') throw new Error(`command "${n}" needs a run function: { description: '…', run: (msg) => … }`);
-      this.#addCommand(n, typeof c === 'function' ? '' : c.description, tagged(owner, run, cog, `/${n}`), owner, check);
+      this.#addCommand(
+        n,
+        typeof c === 'function' ? '' : c.description,
+        tagged(owner, run, cog, `/${n}`),
+        owner,
+        check,
+        typeof c === 'function' ? {} : c
+      );
     }
     for (const [prefix, fn] of Object.entries(cog.buttons || {})) {
       if (typeof fn !== 'function') throw new Error(`button "${prefix}" needs a function`);
@@ -1185,7 +1199,39 @@ export class Bot {
         let ok = true;
         if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
         if (ok) {
-          // fix for command blocking queue
+          // fix for command blocking queue & dm only commands
+          if (c.dmOnly) {
+            await msg.reply(`/${name} can only be used in DMs.`);
+          } else {
+            void Promise.resolve()
+              .then(() => c.fn(msg))
+              .catch(async (e) => {
+                try {
+                  await this.fail(e);
+                } catch (reportError) {
+                  console.error('[yapper] Failed to report command error:', reportError);
+                }
+              });
+
+            void this.emit('command', msg).catch((e) => {
+              console.error('[yapper] Command event listener failed:', e);
+            });
+          }
+        }
+      }
+      await this.emit('message', msg);
+    } else if (ev.type === 'command') {
+      // A slash command picked from the / menu (flag bot_slash_interactions): nothing was posted in chat. msg works
+      // like a command message; msg.reply answers it (shown with "<user> used /cmd"), msg.ephemeral only to them.
+      const msg = this.wrapCommand(data);
+      const c = this.commands.get(msg.command);
+      if (!c) { await this.respond(data, 'ephemeral', { content: `/${msg.command} isn't a command of this bot anymore` }).catch(() => { }); return; }
+      let ok = true;
+      if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
+      if (ok) {
+        if (c.dmOnly) {
+          await msg.reply(`/${name} can only be used in DMs.`);
+        } else {
           void Promise.resolve()
             .then(() => c.fn(msg))
             .catch(async (e) => {
@@ -1200,26 +1246,6 @@ export class Bot {
             console.error('[yapper] Command event listener failed:', e);
           });
         }
-      }
-      await this.emit('message', msg);
-    } else if (ev.type === 'command') {
-      // A slash command picked from the / menu (flag bot_slash_interactions): nothing was posted in chat. msg works
-      // like a command message; msg.reply answers it (shown with "<user> used /cmd"), msg.ephemeral only to them.
-      const msg = this.wrapCommand(data);
-      const c = this.commands.get(msg.command);
-      if (!c) { await this.respond(data, 'ephemeral', { content: `/${msg.command} isn't a command of this bot anymore` }).catch(() => { }); return; }
-      let ok = true;
-      if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
-      if (ok) {
-        void Promise.resolve()
-          .then(() => c.fn(msg))
-          .catch(async (e) => {
-            try {
-              await this.fail(e);
-            } catch (reportError) {
-              console.error('[yapper] Failed to report command error:', reportError);
-            }
-          });
 
         void this.emit('command', msg).catch((e) => {
           console.error('[yapper] Command event listener failed:', e);
@@ -1242,6 +1268,40 @@ export class Bot {
       msg.dm = true;
       msg.is_dm = true;
       msg.dm_channel_id ||= data.channel_id;
+      
+      const match = /^\/([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i
+        .exec((msg.content || '').trim());
+
+      if (match) {
+        const name = match[1].toLowerCase();
+        const c = this.commands.get(name);
+
+        if (c && !c.serverOnly) {
+          msg.command = name;
+          msg.args = (match[2] || '').trim();
+          msg.argv = msg.args ? msg.args.split(/\s+/) : [];
+
+          let ok = true;
+
+          if (c.check) {
+            try {
+              ok = (await c.check(msg)) !== false;
+            } catch (e) {
+              ok = false;
+              await this.fail(e);
+            }
+          }
+
+          if (ok) {
+            void Promise.resolve()
+              .then(() => c.fn(msg))
+              .catch(e => this.fail(e));
+
+            void this.emit('command', msg);
+          }
+        }
+      }
+
       await this.emit('dm_message', msg);
     } else {
       await this.emit(ev.type, { ...data, type: ev.type });
