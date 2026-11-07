@@ -9,7 +9,11 @@ if(
     && process.env.NODE_ENV !== 'development')
     throw new Error('NODE_ENV must be either production or development')
 
-const bot = new Bot(process.env.BOT_TOKEN!);
+const bot = new Bot(process.env.BOT_TOKEN!, {
+  gateway: false,
+  log: true
+});
+
 export const switchboard = new MessageSwitchboard(bot);
 
 // used for /setup command so servers can't run 2 setups at once
@@ -118,10 +122,9 @@ bot.on('dm_message', (msg: any) => {
 });
 
 bot.on('interaction', async (i: any) => {
-    console.log(i.custom_id, i);
-
     if (i.custom_id === 'setup:cancel') {
         let currentSetup = activeSetups.get(i.server_id);
+        console.log(currentSetup);
         if(!currentSetup || i.user_id !== currentSetup.authorId)
             return;
 

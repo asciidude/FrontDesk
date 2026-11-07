@@ -96,11 +96,15 @@ export async function createTicket(
                 AND active_ticket IS NULL;
             `).run(ticketId, userId);
 
+            console.log(`[DEBUG] Opened ticket ${ticketId} | User NOT updated`)
+
             return {
                 ticketId,
                 updatedUser: true
             };
         }
+
+        console.log(`[DEBUG] Opened ticket ${ticketId} | User updated`)
 
         return {
             ticketId,
