@@ -1,4 +1,4 @@
-import type Bot from "../dependencies/yapper";
+import type Bot from "../dependencies/yapper.js";
 
 /**
  * Check permissions of a user by looking through their role permissions.
