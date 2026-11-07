@@ -4,14 +4,14 @@ import { MessageSwitchboard } from '../utils/MessageSwitchboard';
 import { createTicket } from '../utils/createTicket';
 import { closeTicket } from '../utils/closeTicket.js';
 
-if(
+if (
     process.env.NODE_ENV !== 'production'
     && process.env.NODE_ENV !== 'development')
     throw new Error('NODE_ENV must be either production or development')
 
 const bot = new Bot(process.env.BOT_TOKEN!, {
-  gateway: false,
-  log: true
+    gateway: false,
+    log: true
 });
 
 export const switchboard = new MessageSwitchboard(bot);
@@ -110,7 +110,7 @@ bot.on('ready', async () => {
             FROM servers
         `).all();
 
-        for(const server of servers) {
+        for (const server of servers) {
             try {
                 const tickets: any[] = db.prepare(`
                     SELECT ticket_id, channel_id
@@ -118,7 +118,7 @@ bot.on('ready', async () => {
                     WHERE server_id = ?
                 `).all(server.server_id);
 
-                if(!tickets.length) continue;
+                if (!tickets.length) continue;
 
                 const channels = await bot.channels(server.server_id);
 
@@ -128,7 +128,7 @@ bot.on('ready', async () => {
                     );
 
                     // if the channel was deleted, delete it from the database
-                    if(!channelExists) {
+                    if (!channelExists) {
                         await closeTicket(
                             bot,
                             server.server_id,
@@ -140,7 +140,7 @@ bot.on('ready', async () => {
                         console.log(`[DEBUG] Ticket ${ticket.ticket_id} deleted.`)
                     }
                 }
-            } catch(e: any) {
+            } catch (e: any) {
                 console.error(e);
             }
         }
@@ -149,8 +149,8 @@ bot.on('ready', async () => {
 
 bot.on('dm_message', (msg: any) => {
     // Transmit message (dms -> server) or "No ticket selected"
-    if(msg.content.startsWith('/')) return;
-    
+    if (msg.content.startsWith('/')) return;
+
     const userId = msg.author_id;
     const user: any = db.prepare(`
         SELECT *
@@ -158,10 +158,10 @@ bot.on('dm_message', (msg: any) => {
         WHERE user_id = ?
     `).get(userId);
 
-    if(!user) return;
+    if (!user) return;
     const activeTicket = user.active_ticket;
 
-    if(!activeTicket) {
+    if (!activeTicket) {
         bot.dmSend(userId, 'No ticket selected. View tickets with `/tickets`.');
         return;
     }
@@ -172,7 +172,7 @@ bot.on('dm_message', (msg: any) => {
         WHERE ticket_id = ?
     `).get(activeTicket);
 
-    if(!ticket) {
+    if (!ticket) {
         console.log(`[DEBUG] Active ticket ${activeTicket} not found, resetting user's active ticket.`);
 
         db.prepare(`
@@ -186,7 +186,7 @@ bot.on('dm_message', (msg: any) => {
         return;
     }
 
-    if(ticket.status === 'closed') {
+    if (ticket.status === 'closed') {
         db.prepare(`
             UPDATE users
             SET active_ticket = NULL
@@ -209,7 +209,7 @@ bot.on('message', async (msg: any) => {
     const channel = await bot.channel(msg.channel_id);
     const server = await bot.server(channel.server_id);
 
-    if(channel.name.startsWith('ticket-')) {
+    if (channel.name.startsWith('ticket-')) {
         const channelId = channel.id;
 
         const ticket: any = db.prepare(`
@@ -218,7 +218,7 @@ bot.on('message', async (msg: any) => {
             WHERE channel_id = ?
         `).get(channelId);
 
-        if(!ticket) {
+        if (!ticket) {
             msg.reply(`Ticket cannot be found not found - this channel may have failed to delete.\nPlease delete it or move it to your closed category.`);
             return;
         }
@@ -231,18 +231,18 @@ bot.on('message', async (msg: any) => {
             FROM users
             WHERE user_id = ?
         `).get(userId);
-        if(!user) return;
+        if (!user) return;
 
-        if(user.active_ticket !== ticketId) {
+        if (user.active_ticket !== ticketId) {
             bot.dmSend(
                 userId,
                 `### SYSTEM MESSAGE\nYou have recieved a new message from **${server.name}** in ticket \`${ticketId}\`.\n\nSwitch to it using \`/switch ${ticketId}\` to see what was said.`
             );
-            
+
             return;
         }
 
-        if(ticket.status === 'closed') return;
+        if (ticket.status === 'closed') return;
 
         bot.dmSend(
             userId,
@@ -255,7 +255,7 @@ bot.on('interaction', async (i: any) => {
     if (i.custom_id === 'setup:cancel') {
         let currentSetup = activeSetups.get(i.server_id);
         console.log(currentSetup);
-        if(!currentSetup || i.user_id !== currentSetup.authorId)
+        if (!currentSetup || i.user_id !== currentSetup.authorId)
             return;
 
         await bot.emit('setup:cancel', {
@@ -282,11 +282,12 @@ bot.on('interaction', async (i: any) => {
             WHERE server_id = ?
         `).get(serverId);
 
-        if(!server) {
+        if (!server) {
             i.ephemeral('This server could not be found in our database - please contact an admin immediately.');
             return;
         }
 
+        // Check if the user has reached their maximum global or maximum server tickets
         if (user) {
             const userMax = user.max_open_tickets;
             const serverMax = server.max_open_tickets;
@@ -298,7 +299,7 @@ bot.on('interaction', async (i: any) => {
                 AND status != 'closed'
             `).get(userId);
 
-            if(userCount.count >= userMax) {
+            if (userCount.count >= userMax) {
                 i.ephemeral(`You have reached your maximum global tickets (${userMax})`)
                 return;
             }
@@ -311,7 +312,7 @@ bot.on('interaction', async (i: any) => {
                 AND status != 'closed'
             `).get(serverId, userId);
 
-            if(serverCount.count >= serverMax) {
+            if (serverCount.count >= serverMax) {
                 i.ephemeral(`You have reached your maximum tickets within this server (${serverMax})`)
                 return;
             }
@@ -327,75 +328,64 @@ bot.on('interaction', async (i: any) => {
             AND server_id = ?
         `).get(id, serverId);
 
-        if(!ticketPanel) {
-            i.ephemeral('This ticket panel was not found within our database. Please ask a server admin to remove it.');
+        if (!ticketPanel) {
+            i.ephemeral('This ticket panel was not found within our database. Please ask a server admin to remove or replace it.');
             return;
         }
 
         try {
             let ticket;
-            
+
             try {
                 ticket = await createTicket(bot, userId, ticketPanel);
-            } catch(e:any) {
+            } catch (e: any) {
                 i.ephemeral(`I don't have the correct permissions! Please ping an admin and ask them to give me \`Manage Channels\`, \`Manage Server\`, and \`Mention Everyone\` permissions.`);
                 return;
             }
 
-            if(!ticket.updatedUser && ticket.ticketId) {
+            const ticketId = ticket.ticketId;
+            const ticketEmbed = new Embed({
+                title: ticketPanel.title,
+                description:
+                    ticketPanel.description
+                    + `\n-# Opened in ${serverInfo.name} (ticket \`${ticketId}\`)`,
+                color: ticketPanel.color,
+                image: ticketPanel.thumbnail,
+                footer: {
+                    text: 'FrontDesk by asciixd',
+                    icon_url: process.env.ICON_URL
+                },
+                timestamp: new Date()
+            })
+
+            if (!ticket.updatedUser && ticketId) {
                 bot.dmSend(
                     userId,
-                    `A new ticket has been opened. To switch to it, run \`/switch ${ticket.ticketId}\`.`,
+                    `A new ticket has been opened. To switch to it, run \`/switch ${ticketId}\`.`,
                     {
-                        embeds: [
-                            new Embed({
-                                title: ticketPanel.title,
-                                description: 
-                                    ticketPanel.description
-                                    + `\n-# Opened in ${serverInfo.name}`,
-                                color: ticketPanel.color,
-                                image: ticketPanel.thumbnail,
-                                footer: {
-                                    text: 'FrontDesk by asciixd',
-                                    icon_url: process.env.ICON_URL
-                                },
-                                timestamp: new Date()
-                            })
-                        ]
+                        embeds: [ ticketEmbed ]
                     }
                 );
+                
                 i.ack();
-            } else if(ticket.updatedUser && ticket.ticketId) {
+            } else if (ticket.updatedUser && ticketId) {
                 bot.dmSend(
                     userId,
-                    `A new ticket has been opened, it has been automatically selected.\n\n-# **To switch tickets,** please use \`/switch (ticket ID)\`.\n-# **To view tickets (and their IDs),** do \`/tickets\`.`,
+                    `A new ticket has been opened, it has been automatically selected.\n\n-# **To view your active tickets,** use \`/tickets\`.`,
                     {
-                        embeds: [
-                            new Embed({
-                                title: ticketPanel.title,
-                                description: 
-                                    ticketPanel.description
-                                    + `\n-# Opened in ${serverInfo.name}`,
-                                color: ticketPanel.color,
-                                image: ticketPanel.thumbnail,
-                                footer: {
-                                    text: 'FrontDesk by asciixd',
-                                    icon_url: process.env.ICON_URL
-                                },
-                                timestamp: new Date()
-                            })
-                        ]
+                        embeds: [ ticketEmbed ]
                     }
                 );
+
                 i.ack();
             }
-        } catch(e: any) {
+        } catch (e: any) {
             console.error(e);
         }
     }
 });
 
-bot.start().catch((e:any) => {
+bot.start().catch((e: any) => {
     // well shit
     console.error(`[ERR - Startup]: ${e.message}`);
     process.exit(1);
