@@ -1201,7 +1201,7 @@ export class Bot {
         if (ok) {
           // fix for command blocking queue & dm only commands
           if (c.dmOnly) {
-            await msg.reply(`/${name} can only be used in DMs.`);
+            await msg.reply(`/${msg.command} can only be used in DMs.`);
           } else {
             void Promise.resolve()
               .then(() => c.fn(msg))
@@ -1219,7 +1219,6 @@ export class Bot {
           }
         }
       }
-      await this.emit('message', msg);
     } else if (ev.type === 'command') {
       // A slash command picked from the / menu (flag bot_slash_interactions): nothing was posted in chat. msg works
       // like a command message; msg.reply answers it (shown with "<user> used /cmd"), msg.ephemeral only to them.
@@ -1230,7 +1229,7 @@ export class Bot {
       if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
       if (ok) {
         if (c.dmOnly) {
-          await msg.reply(`/${name} can only be used in DMs.`);
+          await msg.reply(`/${msg.command} can only be used in DMs.`);
         } else {
           void Promise.resolve()
             .then(() => c.fn(msg))
@@ -1246,10 +1245,6 @@ export class Bot {
             console.error('[yapper] Command event listener failed:', e);
           });
         }
-
-        void this.emit('command', msg).catch((e) => {
-          console.error('[yapper] Command event listener failed:', e);
-        });
       }
     } else if (ev.type === 'interaction') {
       const i = this.wrapInteraction(data);
@@ -1268,7 +1263,7 @@ export class Bot {
       msg.dm = true;
       msg.is_dm = true;
       msg.dm_channel_id ||= data.channel_id;
-      
+
       const match = /^\/([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i
         .exec((msg.content || '').trim());
 
@@ -1276,7 +1271,7 @@ export class Bot {
         const name = match[1].toLowerCase();
         const c = this.commands.get(name);
 
-        if (c && !c.serverOnly) {
+        if (c && c.dmOnly && !c.serverOnly) {
           msg.command = name;
           msg.args = (match[2] || '').trim();
           msg.argv = msg.args ? msg.args.split(/\s+/) : [];
