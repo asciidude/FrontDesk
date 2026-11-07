@@ -21,7 +21,8 @@ export class Utils extends Cog {
             description: 'Switch from one ticket to another. DM only.',
             dmOnly: true,
             run: async (msg: any) => {
-
+                // Check last 5 messages & send them (if >2,000 chars, send in parts)
+                
             }
         },
 
@@ -29,7 +30,8 @@ export class Utils extends Cog {
             description: 'View all your tickets. DM only.',
             dmOnly: true,
             run: async (msg: any) => {
-
+                // Check all active tickets in a server
+                
             }
         }
     };

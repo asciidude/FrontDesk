@@ -37,6 +37,7 @@ db.exec(`
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id TEXT NOT NULL UNIQUE,
+        max_open_tickets INTEGER NOT NULL DEFAULT 50,
         active_ticket TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
 
@@ -68,6 +69,8 @@ db.exec(`
         admin_roles TEXT NOT NULL DEFAULT '[]',
         open_ticket_category TEXT NOT NULL,
         closed_ticket_category TEXT NOT NULL,
+        max_panels INTEGER NOT NULL DEFAULT 10, -- Premium unlocks 20
+        max_open_tickets INTEGER NOT NULL DEFAULT 15, -- PER USER; not server.
         auto_delete_tickets INTEGER NOT NULL DEFAULT 120, -- 120 hours / 5 days
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
@@ -116,7 +119,7 @@ bot.on('ready', async () => {
                     WHERE server_id = ?
                 `).all(server.server_id);
 
-                if(!tickets.length) return;
+                if(!tickets.length) continue;
 
                 const channels = await bot.channels(server.server_id);
 
@@ -205,10 +208,11 @@ bot.on('dm_message', (msg: any) => {
 bot.on('message', async (msg: any) => {
     // Transmit message (server -> dms)
     const channel = await bot.channel(msg.channel_id);
+    const server = await bot.server(channel.server_id);
 
     if(channel.name.startsWith('ticket-')) {
-        const ticketId = channel.name.slice('tickets-'.length);
-        
+        const ticketId = channel.name.slice('ticket-'.length);
+
         const ticket: any = db.prepare(`
             SELECT *
             FROM tickets
@@ -216,15 +220,32 @@ bot.on('message', async (msg: any) => {
         `).get(ticketId);
 
         if(!ticket) {
-            msg.reply(`\`${ticketId}\` not found - this channel may have failed to delete or be moved.`);
+            msg.reply(`Ticket \`${ticketId}\` not found - this channel may have failed to delete.\nPlease delete it or move it to your closed category.`);
+            return;
+        }
+
+        const userId = ticket.opened_by;
+        const user: any = db.prepare(`
+            SELECT *
+            FROM users
+            WHERE user_id = ?
+        `).get(userId);
+        if(!user) return;
+
+        if(user.active_ticket !== ticketId) {
+            bot.dmSend(
+                userId,
+                `### SYSTEM MESSAGE\nYou have recieved a new message from **${server.name}** in ticket \`${ticketId}\`.\n\nSwitch to it using \`/switch ${ticketId}\` to see what was said.`
+            );
+            
             return;
         }
 
         if(ticket.status === 'closed') return;
 
         bot.dmSend(
-            ticket.opened_by,
-            `<@${msg.author_id}>: ${msg.content}`
+            userId,
+            `<@${msg.author_id}>: ${msg.content}\n-# From ${server.name} (ticket \`${ticketId}\`)`
         );
     }
 });
@@ -245,9 +266,58 @@ bot.on('interaction', async (i: any) => {
     }
 
     if (i.custom_id.startsWith('tickets:open_')) {
-
-        const id = i.custom_id.slice('tickets:open_'.length);
         const userId = i.user_id;
+        const serverId = i.server_id;
+
+        const user: any = db.prepare(`
+            SELECT *
+            FROM users
+            WHERE user_id = ?
+        `).get(userId);
+
+        const server: any = db.prepare(`
+            SELECT *
+            FROM servers
+            WHERE server_id = ?
+        `).get(serverId);
+
+        if(!server) {
+            i.ephemeral('This server could not be found in our database - please contact an admin immediately.');
+            return;
+        }
+
+        if (user) {
+            const userMax = user.max_open_tickets;
+            const serverMax = server.max_open_tickets;
+
+            const userCount: any = db.prepare(`
+                SELECT COUNT(*) AS count
+                FROM tickets
+                WHERE opened_by = ?
+                AND status != 'closed'
+            `).get(userId);
+
+            if(userCount.count >= userMax) {
+                i.ephemeral(`You have reached your maximum global tickets (${userMax})`)
+                return;
+            }
+
+            const serverCount: any = db.prepare(`
+                SELECT COUNT(*) AS count
+                FROM tickets
+                WHERE server_id = ?
+                AND opened_by = ?
+                AND status != 'closed'
+            `).get(serverId, userId);
+
+            if(serverCount.count >= serverMax) {
+                i.ephemeral(`You have reached your maximum tickets within this server (${serverMax})`)
+                return;
+            }
+        }
+
+        const serverInfo = await bot.server(serverId);
+        const id = i.custom_id.slice('tickets:open_'.length);
 
         const ticketPanel: any = db.prepare(`
             SELECT *
@@ -275,7 +345,9 @@ bot.on('interaction', async (i: any) => {
                         embeds: [
                             new Embed({
                                 title: ticketPanel.title,
-                                description: ticketPanel.description,
+                                description: 
+                                    ticketPanel.description
+                                    + `\n-# Opened in ${serverInfo.name}`,
                                 color: ticketPanel.color,
                                 image: ticketPanel.thumbnail,
                                 footer: {
@@ -296,7 +368,9 @@ bot.on('interaction', async (i: any) => {
                         embeds: [
                             new Embed({
                                 title: ticketPanel.title,
-                                description: ticketPanel.description,
+                                description: 
+                                    ticketPanel.description
+                                    + `\n-# Opened in ${serverInfo.name}`,
                                 color: ticketPanel.color,
                                 image: ticketPanel.thumbnail,
                                 footer: {
