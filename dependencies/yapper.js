@@ -155,7 +155,7 @@ async function locate(target) {
 export class Bot {
   /**
    * @param {string} token from Settings → Developer
-   * @param {{ base?: string, gateway?: string | false, prefixes?: string[], log?: boolean, ignoreBots?: boolean }} [opts]
+   * @param {{ base?: string, gateway?: string | boolean, prefixes?: string[], log?: boolean, ignoreBots?: boolean }} [opts]
    *   `ignoreBots` (default true): skip messages from other bots and webhooks (`msg.author_bot`), so two bots can't
    *   reply to each other forever. Pass false to get them too.
    *   `gateway`: where events come from over a WebSocket (default wss://rt.yapper.website/bot). Used when the runtime
@@ -1185,8 +1185,20 @@ export class Bot {
         let ok = true;
         if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
         if (ok) {
-          try { await c.fn(msg); } catch (e) { await this.fail(e); }
-          await this.emit('command', msg);
+          // fix for command blocking queue
+          void Promise.resolve()
+            .then(() => c.fn(msg))
+            .catch(async (e) => {
+              try {
+                await this.fail(e);
+              } catch (reportError) {
+                console.error('[yapper] Failed to report command error:', reportError);
+              }
+            });
+
+          void this.emit('command', msg).catch((e) => {
+            console.error('[yapper] Command event listener failed:', e);
+          });
         }
       }
       await this.emit('message', msg);
@@ -1199,8 +1211,19 @@ export class Bot {
       let ok = true;
       if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
       if (ok) {
-        try { await c.fn(msg); } catch (e) { await this.fail(e); }
-        await this.emit('command', msg);
+        void Promise.resolve()
+          .then(() => c.fn(msg))
+          .catch(async (e) => {
+            try {
+              await this.fail(e);
+            } catch (reportError) {
+              console.error('[yapper] Failed to report command error:', reportError);
+            }
+          });
+
+        void this.emit('command', msg).catch((e) => {
+          console.error('[yapper] Command event listener failed:', e);
+        });
       }
     } else if (ev.type === 'interaction') {
       const i = this.wrapInteraction(data);
