@@ -210,18 +210,20 @@ bot.on('message', async (msg: any) => {
     const server = await bot.server(channel.server_id);
 
     if(channel.name.startsWith('ticket-')) {
-        const ticketId = channel.name.slice('ticket-'.length);
+        const channelId = channel.id;
 
         const ticket: any = db.prepare(`
             SELECT *
             FROM tickets
-            WHERE ticket_id = ?
-        `).get(ticketId);
+            WHERE channel_id = ?
+        `).get(channelId);
 
         if(!ticket) {
-            msg.reply(`Ticket \`${ticketId}\` not found - this channel may have failed to delete.\nPlease delete it or move it to your closed category.`);
+            msg.reply(`Ticket cannot be found not found - this channel may have failed to delete.\nPlease delete it or move it to your closed category.`);
             return;
         }
+
+        const ticketId = ticket.ticket_id;
 
         const userId = ticket.opened_by;
         const user: any = db.prepare(`
