@@ -6,7 +6,7 @@ export class Utils extends Cog {
             description: 'Claim the ticket. Support/admin roles only.',
             serverOnly: true,
             run: async (msg: any) => {
-
+                console.log('claimed');
             }
         },
 

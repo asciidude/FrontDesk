@@ -1271,7 +1271,7 @@ export class Bot {
         const name = match[1].toLowerCase();
         const c = this.commands.get(name);
 
-        if (c && c.dmOnly && !c.serverOnly) {
+        if (c && !c.serverOnly) {
           msg.command = name;
           msg.args = (match[2] || '').trim();
           msg.argv = msg.args ? msg.args.split(/\s+/) : [];
@@ -1294,6 +1294,8 @@ export class Bot {
 
             void this.emit('command', msg);
           }
+        } else if (c && c.serverOnly) {
+          msg.reply(`\`/${match[1].toLowerCase()}\` is a server-only command.`);
         }
       }
 

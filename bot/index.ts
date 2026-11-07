@@ -157,13 +157,37 @@ bot.on('dm_message', (msg: any) => {
     `).get(userId);
 
     if(!user) return;
+    const activeTicket = user.active_ticket;
 
-    if(!user.active_ticket) {
-        bot.dmSend(userId, 'No ticket selected. View tickets with `/tickets`.')
+    if(!activeTicket) {
+        bot.dmSend(userId, 'No ticket selected. View tickets with `/tickets`.');
+        return;
     }
 
-    // get meca's lotion from her car
-    // TODO
+    const ticket: any = db.prepare(`
+        SELECT *
+        FROM tickets
+        WHERE ticket_id = ?
+    `).get(activeTicket);
+
+    if(!ticket) {
+        console.log(`[DEBUG] Active ticket ${activeTicket} not found, resetting user's active ticket.`);
+
+        db.prepare(`
+            UPDATE users
+            SET active_ticket = NULL
+            WHERE user_id = ?
+            AND active_ticket = ?
+        `).run(userId, activeTicket);
+
+        bot.dmSend(userId, 'No ticket selected. View tickets with `/tickets`.');
+        return;
+    }
+
+    bot.send(
+        ticket.channel_id,
+        `<@${userId}>: ${msg.content}`
+    );
 });
 
 bot.on('message', (msg: any) => {
