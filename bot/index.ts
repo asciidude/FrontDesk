@@ -146,8 +146,28 @@ bot.on('ready', async () => {
 });
 
 bot.on('dm_message', (msg: any) => {
-    // Transmit message to active ticket. If no ticket is selected, reply with "ticket not found"
+    // Transmit message (dms -> server) or "No ticket selected"
+    if(msg.content.startsWith('/')) return;
+    
+    const userId = msg.author_id;
+    const user: any = db.prepare(`
+        SELECT *
+        FROM users
+        WHERE user_id = ?
+    `).get(userId);
+
+    if(!user) return;
+
+    if(!user.active_ticket) {
+        bot.dmSend(userId, 'No ticket selected. View tickets with `/tickets`.')
+    }
+
+    // get meca's lotion from her car
     // TODO
+});
+
+bot.on('message', (msg: any) => {
+    // Transmit message (server -> dms)
 });
 
 bot.on('interaction', async (i: any) => {

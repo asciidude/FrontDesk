@@ -93,10 +93,10 @@ export async function closeTicket(
     `).get(ticket.opened_by);
 
     bot.dmSend(
-        ticket.user_id,
-        `Ticket \`${ticket.ticket_id} has been closed.\``
-        + reason ? `\nReason: ${reason}` : ''
-        + (!user.active_ticket ? '\n\nYou no longer have an active ticket - use `/switch` to switch to another & `/tickets` to view your tickets.' : '')
+        ticket.opened_by,
+        `Ticket \`${ticket.ticket_id}\` has been closed.`
+        + (reason ? `\nReason: ${reason}` : '')
+        + (!user.active_ticket ? '\n\n-# **You no longer have an active ticket.** Use `/switch` to switch to another & `/tickets` to view your tickets.' : '')
     );
 
     return {
