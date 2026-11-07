@@ -1201,7 +1201,7 @@ export class Bot {
         if (ok) {
           // fix for command blocking queue & dm only commands
           if (c.dmOnly) {
-            await msg.reply(`/${msg.command} can only be used in DMs.`);
+            await msg.reply(`\`/${msg.command}\` can only be used in DMs.`);
           } else {
             void Promise.resolve()
               .then(() => c.fn(msg))
@@ -1229,7 +1229,7 @@ export class Bot {
       if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
       if (ok) {
         if (c.dmOnly) {
-          await msg.reply(`/${msg.command} can only be used in DMs.`);
+          await msg.reply(`\`/${msg.command}\` can only be used in DMs.`);
         } else {
           void Promise.resolve()
             .then(() => c.fn(msg))
