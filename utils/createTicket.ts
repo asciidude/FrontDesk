@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { db } from "../bot";
-import type Bot from "../dependencies/yapper";
+import type Bot from "../dependencies/yapper.js";
 import { checkPermissions } from "./checkPermissions";
 
 /**

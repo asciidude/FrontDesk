@@ -19,17 +19,52 @@
  * Verified bots can also run on Yapin’s bot hosting, which passes the token in process.env.YAPPER_BOT_TOKEN.
  * Docs: https://www.yapin.gg/developers
  */
+/** SDK version, stamped from public/sdk/version.json by scripts/sdk-build.mjs (same as the npm package "yapin"). */
+export const VERSION = '1.6.0';
 /** Embeds, buttons and rows can be builders or plain objects. */
 /** Message flag for Components V2 layouts (IS_COMPONENTS_V2, 1 << 15). */
 export const IS_COMPONENTS_V2 = 1 << 15;
 const plain = (x) => (x && typeof x.toJSON === 'function' ? x.toJSON() : x);
 const list = (v) => (v === undefined ? undefined : v === null ? null : [].concat(v).map(plain));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const isForm = (b) => typeof FormData !== 'undefined' && b instanceof FormData;
+/** One file for send({ files }): a path (Node), a Blob/File, or { name, data } with bytes, a Blob or a string. */
+async function filePart(f) {
+  if (typeof f === 'string') {
+    const fs = await import('node:fs/promises');
+    return { name: f.split(/[\\/]/).pop(), blob: new Blob([await fs.readFile(f)]) };
+  }
+  if (typeof Blob !== 'undefined' && f instanceof Blob) return { name: f.name || 'file', blob: f };
+  if (f && typeof f === 'object' && typeof f.name === 'string' && f.data != null) {
+    return { name: f.name, blob: f.data instanceof Blob ? f.data : new Blob([f.data], f.type ? { type: f.type } : {}) };
+  }
+  throw new Error('A file is a path, a Blob/File, or { name: "card.png", data: bytes }');
+}
 /** `{ messages, authors }` from the API → the messages, each with its `author` (null if the account is gone). */
 const withAuthors = (out) => {
   const by = new Map((out.authors || []).map((a) => [a.id, a]));
   return (out.messages || []).map((m) => ({ ...m, author: by.get(m.author_id) ?? null }));
 };
+/** a > b for "1.10.0" style versions. */
+const newer = (a, b) => {
+  const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  return false;
+};
+let versionChecked = false;
+/**
+ * Once per process: one line when the server knows a newer SDK (GET /version, no token). Never throws, never waits
+ * for the bot. YAPPER_NO_UPDATE_CHECK=1 (or log: false) turns it off.
+ */
+async function checkVersion(base, log) {
+  if (versionChecked || !log || globalThis.process?.env?.YAPPER_NO_UPDATE_CHECK) return;
+  versionChecked = true;
+  try {
+    const res = await fetch(`${base}/version`, { headers: { 'user-agent': `yapper-sdk/${VERSION}` }, signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined });
+    const latest = res.ok ? (await res.json())?.sdk?.js : null;
+    if (typeof latest === 'string' && newer(latest, VERSION)) console.warn(`[yapper] SDK ${VERSION} is behind the latest ${latest}: npm install yapin@latest, or download https://www.yapin.gg/sdk/yapper.js again`);
+  } catch { /* offline or an older server: no warning */ }
+}
 /** Wait before retry number n (1, 2, …): 1s, 2s, 4s … up to 30s, with some jitter so many bots don't sync up. */
 const backoff = (n) => Math.min(30_000, 1000 * 2 ** (n - 1)) * (0.75 + Math.random() * 0.5);
 /**
@@ -109,8 +144,8 @@ async function locate(target) {
     const main = typeof process !== 'undefined' && process.argv?.[1] ? path.dirname(path.resolve(process.argv[1])) : null;
     tries = [...new Set([main && path.resolve(main, raw), path.resolve(process.cwd(), raw)].filter(Boolean))];
   }
-  // 'cogs/fun' works too: try .js and .mjs.
-  const found = tries.flatMap((p) => (/\.m?js$/i.test(p) ? [p] : [p, `${p}.js`, `${p}.mjs`])).find((p) => fs.existsSync(p));
+  // 'cogs/fun' works too: try .js, .mjs, .ts, and .mts.
+  const found = tries.flatMap((p) => (/\.(?:m?js|m?ts)$/i.test(p) ? [p] : [p, `${p}.js`, `${p}.mjs`, `${p}.ts`, `${p}.mts`])).find((p) => fs.existsSync(p));
   if (!found) throw new Error(`Can't find ${raw} (looked at ${tries.join(' and ')})`);
   const rel = path.relative(process.cwd(), found);
   const label = (rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : found).split(path.sep).join('/');
@@ -130,10 +165,20 @@ export class Bot {
   constructor(token, opts = {}) {
     if (!token || !String(token).startsWith('yb_')) throw new Error('Pass your bot token (starts with yb_). Get one in Settings → Developer.');
     this.token = String(token).trim();
-    this.base = (opts.base || 'https://www.yapin.gg/api/bot/v1').replace(/\/$/, '');
+    // YAPPER_API_URL: set by bot hosting (usable anywhere) to point at another API host. The default is our own API
+    // host; if it can't be reached the SDK uses the website's address for 10 minutes (same API, same token).
+    const chosen = opts.base || globalThis.process?.env?.YAPPER_API_URL;
+    this.base = (chosen || 'https://bots.yapper.website/api/bot/v1').replace(/\/$/, '');
+    // Hosted bots get our host through YAPPER_API_URL: they keep the fallback too; any other chosen base doesn't.
+    this._fallback = chosen && this.base !== 'https://bots.yapper.website/api/bot/v1' ? null : 'https://www.yapin.gg/api/bot/v1';
+    this._fallbackUntil = 0;
     this.gateway = opts.gateway === false || typeof globalThis.WebSocket !== 'function' ? null : (opts.gateway || 'wss://rt.yapper.website/bot');
     this.prefixes = opts.prefixes || ['/', '!'];
     this.log = opts.log !== false;
+    // Most seconds one call spends waiting out 429s / "busy" 503s in total before it throws (err.retryAfter says how
+    // long was left). Three 10 s waits with 50% jitter used to hold an edit for up to 45 s.
+    this.maxRetryWait = Number.isFinite(opts.maxRetryWait) ? Math.max(0, opts.maxRetryWait) : 30;
+    this._cfWarned = false;
     this.ignoreBots = opts.ignoreBots !== false;
     this.handlers = {};
     this.commands = new Map();
@@ -149,10 +194,31 @@ export class Bot {
     this._syncTimer = null;
     this._version = 0;
     this._ws = null;
+    this._gwRequests = false;
+    this._gwPending = new Map();
+    this._gwNext = 0;
   }
 
-  /** Listen for an event: "message", "member_join", "member_leave", "reaction_add", "reaction_remove", "voice_join", "voice_leave", "interaction", "test", "ready", "error". */
+  /**
+   * Listen for an event: "message", "command", "dm_message", "member_join", "member_leave", "reaction_add", "reaction_remove",
+   * "voice_join", "voice_leave", "invite_create", "invite_delete", "interaction", "test", "ready", "error".
+   * member_join also has invite_code and inviter_id when known (bots with Manage Server).
+   * dm_message is someone DMing the bot: a message with msg.reply / msg.say that answer in the DM, and msg.dm = true.
+   */
   on(event, fn) { (this.handlers[event] ||= []).push(fn); return this; }
+
+  /**
+   * Someone DMed the bot: `bot.onDm((msg) => msg.reply('hi!'))`. msg has id, channel_id (the DM), author_id, author,
+   * content, attachment / attachments, reply_to_id, created_at, is_dm (true), dm_channel_id. Only DMs with this bot ever come in. Same as on('dm_message').
+   */
+  onDm(fn) { return this.on('dm_message', fn); }
+
+  /**
+   * Someone reacted to a message this bot sent (in a server channel it can see, or in its DMs), or took the reaction off:
+   * `bot.onReactionOnMine((r) => r.added && r.emoji === '👍' && …)`. r has message_id, channel_id, server_id (null in a DM),
+   * user_id, username, emoji, added (true for reaction_add, false for reaction_remove), is_dm and dm_channel_id (in a DM) and type.
+   */
+  onReactionOnMine(fn) { const w = mineOnly(this, fn); return this.on('reaction_add', w).on('reaction_remove', w); }
 
   /** Register a command. People type /name or !name; the composer suggests it. */
   command(name, description, fn) { return this.#addCommand(name, description, fn, null, null); }
@@ -182,6 +248,18 @@ export class Bot {
    * Answer within 3 seconds or the person sees "This interaction failed"; you then have 15 minutes for more answers.
    */
   onButton(customId, fn) { this.buttons.push({ match: customId, fn, owner: null }); return this; }
+  /**
+   * Handle picks in your select menus with this custom_id (string or RegExp). `i.values` is the list of picked values.
+   * Answer like a click: i.reply / i.ephemeral / i.update / i.ack, or open a form with i.showModal(modal).
+   * `bot.onSelect('food', (i) => i.ephemeral(`You picked ${i.values.join(', ')}`))`. In testing (flag bot_selects).
+   */
+  onSelect(customId, fn) { this.buttons.push({ match: customId, fn, owner: null, kind: 'select' }); return this; }
+  /**
+   * Handle your modals being sent back, by the modal's custom_id (string or RegExp). `i.values` maps each input's
+   * custom_id to its answer: text for a text box, a list for a select menu. Answer with i.reply / i.ephemeral / i.ack
+   * (or i.update when the modal came from a click). In testing (flag bot_modals).
+   */
+  onModal(customId, fn) { this.buttons.push({ match: customId, fn, owner: null, kind: 'modal_submit' }); return this; }
 
   // ---- cogs: split a bot into files ----
   /**
@@ -199,14 +277,13 @@ export class Bot {
       const { abs } = await locate(dir);
       const [fs, path] = await Promise.all([import('node:fs/promises'), import('node:path')]);
       const files = (await fs.readdir(abs, { withFileTypes: true }))
-        .filter((d) => d.isFile() && /\.(?:[cm]?js|[cm]?ts)$/i.test(d.name) && !/^[_.]/.test(d.name))
+        .filter((d) => d.isFile() && /\.(?:m?js|m?ts)$/i.test(d.name) && !/^[_\.]/.test(d.name))
         .map((d) => d.name).sort();
       const names = [];
       for (const f of files) names.push(await this.#loadFile(path.join(abs, f), 0));
       return names;
     })());
   }
-
 
   /** Add a cog made in code: `await bot.addCog(new Fun(bot))` or `bot.addCog(Fun)`. Its name is its class name. */
   addCog(cog) {
@@ -238,6 +315,7 @@ export class Bot {
    * Unload a cog and load its file again, fresh from disk: edit cogs/fun.js, then `await bot.reload('fun')`, no restart.
    * If the new version fails to load, the old one is put back and the error is thrown.
    * (Files the cog imports itself are not re-read; restart for those.)
+   * @see https://www.yapin.gg/developers/api/bot#put-commands
    */
   async reload(name) {
     const owner = this.#findCog(name);
@@ -349,6 +427,9 @@ export class Bot {
         bot.buttons.push({ match: customId, fn: tagged(owner, fn, undefined, `button ${customId}`), owner });
         return proxy;
       },
+      // So a cog's listeners come off again on unload.
+      onDm(fn) { return own.on('dm_message', fn); },
+      onReactionOnMine(fn) { const w = mineOnly(bot, fn); own.on('reaction_add', w); return own.on('reaction_remove', w); },
     };
     proxy = new Proxy(bot, {
       get(t, k) {
@@ -385,7 +466,7 @@ export class Bot {
     this._syncTimer = setTimeout(() => {
       this._syncTimer = null;
       const commands = this.#commandList();
-      this.api('PUT', '/commands', { commands }).then(
+      this.api('PUT', '/commands', { commands, interactions: true }).then(
         () => { if (this.log) console.log(`[yapper] commands updated (${commands.length})`); },
         (e) => this.fail(e),
       );
@@ -395,29 +476,88 @@ export class Bot {
   /**
    * Raw API call. `api('GET', '/servers')`, `api('POST', '/channels/<id>/messages', { content: 'hi' })`.
    * A 429 that says how long to wait (Retry-After), or a 503 "Yapin’ is busy", is waited out and retried,
-   * up to 3 times (nothing was sent, so that's safe). Other errors throw an Error with `.status` (and `.retryAfter` in seconds on 429).
+   * up to 3 times and `maxRetryWait` seconds in total (30 by default; nothing was sent, so that's safe).
+   * Other errors throw an Error with `.status` (and `.retryAfter` in seconds on 429).
    */
   async api(method, path, body, { timeout = 30_000, retries = 3 } = {}) {
+    let waited = 0;
+    let gatewayRetried = false;
     for (let attempt = 0; ; attempt++) {
-      const res = await fetch(this.base + path, {
-        method,
-        headers: { authorization: `Bot ${this.token}`, 'content-type': 'application/json', 'user-agent': 'yapper-sdk/1' },
-        body: body === undefined ? undefined : JSON.stringify(body),
-        // A dead connection shouldn't hang the bot forever.
-        signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(timeout) : undefined,
-      });
-      const out = await res.json().catch(() => ({}));
-      if (res.ok) return out;
-      // 429: slow down. 503 with retry_after: Yapin’ was busy and nothing was done, so retrying is safe too.
-      const busy = res.status === 503 && typeof out.retry_after === 'number';
-      const wait = res.status === 429 || busy ? Number(res.headers.get('retry-after')) || out.retry_after || 0 : 0;
-      if (wait > 0 && wait <= 60 && attempt < retries) {
-        if (this.log) console.warn(`[yapper] ${busy ? 'Yapin’ busy' : 'rate limited'}, retrying ${method} ${path} in ${wait}s`);
-        await sleep(wait * 1000 * (1 + Math.random() * 0.5));  // jitter: bots don't all come back at once
+      // Over the gateway socket when it says so (flag bot_gateway_requests): no new HTTPS request per call. Files and
+      // the event feed always go over HTTPS. A socket that drops before answering: a GET is asked again over HTTPS,
+      // anything else throws (it may have gone through), like a network error would.
+      let status, out, isJson, retryHeader;
+      const gw = this._gwRequests && this._ws?.readyState === 1 && !isForm(body) && !/^\/events(?:[/?]|$)/.test(path)
+        ? await this.#viaGateway(method, path, body, timeout) : null;
+      if (gw?.lost && method !== 'GET') {
+        const err = new Error(`${method} ${path}: the gateway connection dropped before the answer`);
+        err.status = 0;
+        throw err;
+      }
+      if (gw && !gw.lost) {
+        status = gw.status; out = gw.body && typeof gw.body === 'object' ? gw.body : {}; isJson = true; retryHeader = 0;
+      } else {
+        const onFallback = this._fallback && Date.now() < this._fallbackUntil;
+        const base = onFallback ? this._fallback : this.base;
+        let res;
+        try {
+          res = await fetch(base + path, {
+            method,
+            // FormData (files) sets its own multipart content type, with the boundary.
+            headers: { authorization: `Bot ${this.token}`, ...(isForm(body) ? {} : { 'content-type': 'application/json' }), 'user-agent': `yapper-sdk/${VERSION}` },
+            body: body === undefined ? undefined : isForm(body) ? body : JSON.stringify(body),
+            // A dead connection shouldn't hang the bot forever.
+            signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(timeout) : undefined,
+          });
+        } catch (e) {
+          // Our API host unreachable: the website's address for 10 minutes. A GET is asked again there at once;
+          // anything else isn't (it may have gone through), the next call goes there.
+          if (!this._fallback || onFallback || e?.name === 'TimeoutError') throw e;
+          this._fallbackUntil = Date.now() + 10 * 60_000;
+          if (this.log) console.warn(`[yapper] ${this.base} unreachable, using ${this._fallback} for 10 minutes`);
+          if (method === 'GET' && attempt < retries) continue;
+          throw e;
+        }
+        if ((res.status === 502 || res.status === 504) && this._fallback && !onFallback) {
+          this._fallbackUntil = Date.now() + 10 * 60_000;
+          if (this.log) console.warn(`[yapper] ${this.base} answered ${res.status}, using ${this._fallback} for 10 minutes`);
+          if (method === 'GET' && attempt < retries) continue;
+        }
+        isJson = (res.headers.get('content-type') || '').includes('json');
+        out = await res.json().catch(() => ({}));
+        status = res.status;
+        retryHeader = Number(res.headers.get('retry-after')) || 0;
+      }
+      if (status >= 200 && status < 300) return out;
+      // A 502/503/504 from the proxy in front of us (a release swapping copies, a restart): asked once more after 2 s.
+      // A 503 means nothing was done, so any call is safe to repeat; a 502/504 may have gone through, so only calls
+      // that are safe to repeat (GET, PUT, DELETE) are.
+      const ours503 = status === 503 && typeof out.retry_after === 'number';
+      const again = status === 503 || ((status === 502 || status === 504) && (method === 'GET' || method === 'PUT' || method === 'DELETE'));
+      if (again && !ours503 && !gatewayRetried && attempt < retries) {
+        gatewayRetried = true;
+        if (this.log) console.warn(`[yapper] ${method} ${path} answered ${status}, trying once more in 2s`);
+        await sleep(2000);
         continue;
       }
-      const err = new Error(out.error || `${method} ${path} failed (${res.status})`);
-      err.status = res.status;
+      // A 429 page that isn't our JSON comes from Cloudflare in front of us: a per-address limit, not a bot limit.
+      if (status === 429 && !isJson && !this._cfWarned) {
+        this._cfWarned = true;
+        console.warn('[yapper] Cloudflare rate limited this machine\'s IP address (not a Yapin\' bot limit). If several bots share this IP, tell us in Yapin\' HQ.');
+      }
+      // 429: slow down. 503 with retry_after: Yapin’ was busy and nothing was done, so retrying is safe too.
+      const busy = status === 503 && typeof out.retry_after === 'number';
+      const wait = status === 429 || busy ? retryHeader || out.retry_after || 0 : 0;
+      // Jitter of up to 20% so bots don't all come back at once, inside the call's total waiting budget.
+      const pause = wait * (1 + Math.random() * 0.2);
+      if (wait > 0 && wait <= 60 && attempt < retries && waited + pause <= this.maxRetryWait) {
+        if (this.log) console.warn(`[yapper] ${busy ? 'Yapin’ busy' : 'rate limited'}, retrying ${method} ${path} in ${wait}s`);
+        waited += pause;
+        await sleep(pause * 1000);
+        continue;
+      }
+      const err = new Error(out.error || `${method} ${path} failed (${status})`);
+      err.status = status;
       if (wait) err.retryAfter = wait;
       throw err;
     }
@@ -427,59 +567,88 @@ export class Bot {
    * Send a message to a channel. Returns the message.
    * `opts.embeds`: up to 5 cards (plain objects or `new Embed()`), content can be '' then. `opts.replyTo`: a message id.
    * `opts.components`: up to 5 rows of up to 5 buttons (`new Row(Button.primary('Go', 'go'))`).
+   * `opts.files` (in testing, flag bot_uploads): up to 4 files, each a file path (Node), a Blob/File, or
+   * `{ name: 'card.png', data: bytes }`. Pictures, videos, sounds, TXT, PDF, ZIP, 10 MB each, 12 MB in all. Every file becomes its own
+   * message (the first one has the text) and is checked before it shows; content can be '' then. Returns the first message.
+   * `bot.send(ch, 'Welcome!', { files: [{ name: 'welcome.png', data: png }] })`
+   * `opts.stickerId` (in testing, flag stickers): one of the server's stickers as the whole message; content stays ''.
+   * @see https://www.yapin.gg/developers/api/messages#post-channels-id-messages
    */
   send(channelId, content, opts = {}) {
-    return this.#soft(this.api('POST', `/channels/${channelId}/messages`, { content: String(content ?? ''), reply_to: opts.replyTo, embeds: list(opts.embeds || undefined), components: list(opts.components || undefined) }).then((out) => out.message));
+    const body = { content: String(content ?? ''), reply_to: opts.replyTo, embeds: list(opts.embeds || undefined), components: list(opts.components || undefined), sticker_id: opts.stickerId };
+    const files = opts.files == null ? [] : [].concat(opts.files);
+    const sending = files.length ? this.#withFiles(body, files) : Promise.resolve(body);
+    return this.#soft(sending.then((b) => this.api('POST', `/channels/${channelId}/messages`, b)).then((out) => out.message));
+  }
+
+  async #withFiles(body, files) {
+    if (files.length > 4) throw new Error('Up to 4 files per message');
+    const form = new FormData();
+    form.append('payload_json', JSON.stringify(body));
+    for (const [i, f] of files.entries()) {
+      const { name, blob } = await filePart(f);
+      form.append(`files[${i}]`, blob, name);
+    }
+    return form;
   }
   /**
    * Send a Components V2 message (layout components, flags 32768): the layout is the whole message, no content
    * or embeds. `bot.sendLayout(ch, [new Container().accent('blue').text('# Hi').add(new Row(Button.primary('Go', 'go')))])`.
    * Limits: 40 components (nested ones count), 4000 characters of text in all, galleries of 1 to 10.
+   * @see https://www.yapin.gg/developers/api/messages#post-channels-id-messages
    */
   sendLayout(channelId, components, opts = {}) {
     return this.#soft(this.api('POST', `/channels/${channelId}/messages`, { flags: IS_COMPONENTS_V2, reply_to: opts.replyTo, components: list(components) }).then((out) => out.message));
   }
   /** Send just a card: `bot.sendEmbed(ch, new Embed().title('Hi'))`. */
   sendEmbed(channelId, embed, content = '') { return this.send(channelId, content, { embeds: [].concat(embed) }); }
-  /** Delete a message: the bot's own, or anyone's if its roles have Manage messages. */
+  /** Delete a message: the bot's own, or anyone's if its roles have Manage messages. @see https://www.yapin.gg/developers/api/messages#delete-channels-id-messages-mid */
   async delete(channelId, messageId) { return this.api('DELETE', `/channels/${channelId}/messages/${messageId}`); }
-  /** Servers the bot is in. */
+  /** Servers the bot is in (with member_count, and online_count where live counts are on). @see https://www.yapin.gg/developers/api/servers#get-servers */
   async servers() { return (await this.api('GET', '/servers')).servers; }
   /**
    * Channels of a server the bot can see (private ones only if it was let in), in sidebar order:
    * { id, name, type: 'text'|'voice', category: { id, name, position } | null, position, private, read_only, slowmode }.
    * `channels(serverId, { type: 'text' })` for one kind. Without a server id: every channel in every server the bot is in.
+   * @see https://www.yapin.gg/developers/api/channels#get-channels
+   * @see https://www.yapin.gg/developers/api/channels#get-servers-id-channels
    */
   async channels(serverId, { type } = {}) {
     const q = type ? `?type=${encodeURIComponent(type)}` : '';
     return (await this.api('GET', serverId ? `/servers/${serverId}/channels${q}` : `/channels${q}`)).channels;
   }
-  /** Channel categories of a server, in order: { id, name, position }. */
+  /** Channel categories of a server, in order: { id, name, position }. @see https://www.yapin.gg/developers/api/channels#get-servers-id-channels */
   async categories(serverId) { return (await this.api('GET', `/servers/${serverId}/channels`)).categories; }
-  /** One channel by id (null if the bot can't see it). */
+  /** One channel by id (null if the bot can't see it). @see https://www.yapin.gg/developers/api/channels#get-channels-id */
   async channel(channelId) { try { return (await this.api('GET', `/channels/${channelId}`)).channel; } catch { return null; } }
-  /** Members of a server (first 200; pass `after` = last user id for more). */
+  /** Members of a server (first 200; pass `after` = last user id for more). @see https://www.yapin.gg/developers/api/servers#get-servers-id-members */
   async members(serverId, after) { return (await this.api('GET', `/servers/${serverId}/members?limit=200${after ? `&after=${after}` : ''}`)).members; }
-  /** Recent messages in a channel, oldest first. Each has its `author` profile ({ id, username, display_name, … }). */
+  /** Recent messages in a channel, oldest first. Each has its `author` profile ({ id, username, display_name, … }). @see https://www.yapin.gg/developers/api/messages#get-channels-id-messages */
   async messages(channelId, limit = 50) { return withAuthors(await this.api('GET', `/channels/${channelId}/messages?limit=${limit}`)); }
-  /** Someone's public profile. */
+  /** Someone's public profile. @see https://www.yapin.gg/developers/api/users#get-users-id */
   async user(userId) { return (await this.api('GET', `/users/${userId}`)).user; }
   /**
    * Set the bot's profile picture. Pass a file path (Node), a Blob/File, or bytes (Uint8Array/Buffer).
    * PNG, JPG, GIF or WebP, up to 8 MB. `type` is needed only for raw bytes (e.g. 'image/png').
+   * @see https://www.yapin.gg/developers/api/bot#put-me-avatar
    */
   async setAvatar(image, type) { return this.#upload('/me/avatar', image, type); }
-  /** Change the bot's display name and/or bio: setProfile({ displayName: 'Dice Bot', bio: 'Rolls dice' }). */
+  /** Change the bot's display name and/or bio: setProfile({ displayName: 'Dice Bot', bio: 'Rolls dice' }). @see https://www.yapin.gg/developers/api/bot#patch-me */
   async setProfile({ displayName, bio } = {}) {
     return this.api('PATCH', '/me', { display_name: displayName, bio });
   }
-  /** The bot's banner, same inputs as setAvatar. */
+  /** The bot's banner, same inputs as setAvatar. @see https://www.yapin.gg/developers/api/bot#put-me-banner */
   async setBanner(image, type) { return this.#upload('/me/banner', image, type); }
-  /** Online status and what the bot is "playing": setStatus('dnd', 'Moderating'). Status: online, idle, dnd. */
-  async setStatus(status = 'online', activity = null || '') { return this.api('PUT', '/me/status', { status, activity }); }
+  /** Online status and what the bot is "playing": setStatus('dnd', 'Moderating'). Status: online, idle, dnd. @see https://www.yapin.gg/developers/api/bot#put-me-status */
+  async setStatus(status = 'online', activity = '') {
+    const out = await this.api('PUT', '/me/status', { status, activity });
+    // Connected to the gateway: tell it too, so the dot and activity change there at once.
+    try { if (this._ws?.readyState === 1) this._ws.send(JSON.stringify({ op: 'presence', status, activity })); } catch { /* closed */ }
+    return out;
+  }
 
   // ---- messages ----
-  /** Edit one of the bot's own messages. `opts.embeds` / `opts.components`: new ones, or null to remove them. */
+  /** Edit one of the bot's own messages. `opts.embeds` / `opts.components`: new ones, or null to remove them. @see https://www.yapin.gg/developers/api/messages#patch-channels-id-messages-mid */
   async edit(channelId, messageId, content, opts = {}) {
     const body = {};
     if (content !== undefined && content !== null) body.content = String(content);
@@ -487,17 +656,23 @@ export class Bot {
     if (opts.components !== undefined) body.components = list(opts.components);
     return (await this.api('PATCH', `/channels/${channelId}/messages/${messageId}`, body)).message;
   }
-  /** Swap the layout of one of the bot's Components V2 messages (see sendLayout). */
+  /** Swap the layout of one of the bot's Components V2 messages (see sendLayout). @see https://www.yapin.gg/developers/api/messages#patch-channels-id-messages-mid */
   async editLayout(channelId, messageId, components) {
     return (await this.api('PATCH', `/channels/${channelId}/messages/${messageId}`, { flags: IS_COMPONENTS_V2, components: list(components) })).message;
   }
   /**
-   * Answer a button click (within 15 minutes). type: 'reply' (new message), 'ephemeral' (only the clicker sees it),
-   * 'update' (edit the clicked message) or 'ack' (just "got it"). The `i` helpers from onButton call this for you.
+   * Answer a button click, a pick, a modal or a /command (within 15 minutes). type: 'reply' (new message),
+   * 'ephemeral' (only the clicker sees it), 'update' (edit the clicked message), 'ack' (just "got it") or 'modal'
+   * (open a form: `{ modal: new Modal(...) }`, only as the first answer). The `i` helpers call this for you.
    * `layout`: a Components V2 layout instead of content/embeds/components (reply and update only).
+   * @see https://www.yapin.gg/developers/api/interactions#post-interactions-id-token-callback
    */
-  respond(interaction, type, { content, embeds, components, layout } = {}) {
+  respond(interaction, type, { content, embeds, components, layout, modal } = {}) {
+    if (!interaction || !interaction.id || !interaction.token) {
+      return Promise.reject(new Error('Nothing to answer: this needs an interaction (a click, a pick, a modal or a command event)'));
+    }
     const body = { type };
+    if (modal !== undefined) body.modal = plain(modal);
     if (content !== undefined) body.content = content === null ? null : String(content);
     if (embeds !== undefined) body.embeds = list(embeds);
     if (components !== undefined) body.components = list(components);
@@ -507,43 +682,152 @@ export class Bot {
   /**
    * One message by id, with its `author` profile, like send() and edit() return a message.
    * (`.message` still works for bots written against the older SDK that returned the raw body.)
+   * @see https://www.yapin.gg/developers/api/messages#get-channels-id-messages-mid
    */
   async message(channelId, messageId) {
     const out = await this.api('GET', `/channels/${channelId}/messages/${messageId}`);
     return out.message ? { ...out.message, author: out.author ?? null, message: out.message } : out;
   }
-  /** Messages after a time (ISO string or Date), oldest first, each with its `author`. */
+  /** Messages after a time (ISO string or Date), oldest first, each with its `author`. @see https://www.yapin.gg/developers/api/messages#get-channels-id-messages */
   async messagesAfter(channelId, after, limit = 50) { return withAuthors(await this.api('GET', `/channels/${channelId}/messages?limit=${limit}&after=${encodeURIComponent(new Date(after).toISOString())}`)); }
-  /** Delete up to 100 messages at once (needs Manage messages for other people's). Returns { deleted, skipped }. */
+  /** Delete up to 100 messages at once (needs Manage messages for other people's). Returns { deleted, skipped }. @see https://www.yapin.gg/developers/api/messages#post-channels-id-messages-bulk-delete */
   async bulkDelete(channelId, messageIds) { return this.api('POST', `/channels/${channelId}/messages/bulk-delete`, { ids: messageIds }); }
+  /** @see https://www.yapin.gg/developers/api/messages#put-channels-id-messages-mid-pin */
   async pin(channelId, messageId) { return this.api('PUT', `/channels/${channelId}/messages/${messageId}/pin`); }
+  /** @see https://www.yapin.gg/developers/api/messages#delete-channels-id-messages-mid-pin */
   async unpin(channelId, messageId) { return this.api('DELETE', `/channels/${channelId}/messages/${messageId}/pin`); }
+  /** @see https://www.yapin.gg/developers/api/messages#put-channels-id-messages-mid-reactions-emoji */
   react(channelId, messageId, emoji) { return this.#soft(this.api('PUT', `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`)); }
+  /** @see https://www.yapin.gg/developers/api/messages#delete-channels-id-messages-mid-reactions-emoji */
   async unreact(channelId, messageId, emoji) { return this.api('DELETE', `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`); }
+  /** @see https://www.yapin.gg/developers/api/messages#get-channels-id-messages-mid-reactions */
   async reactions(channelId, messageId) { return (await this.api('GET', `/channels/${channelId}/messages/${messageId}/reactions`)).reactions; }
 
   // ---- members, roles, moderation (the bot needs a role with the matching permission) ----
+  /** Server details; `online_count` (people online now) sits next to `member_count` where live counts are on. @see https://www.yapin.gg/developers/api/servers#get-servers-id */
   async server(serverId) { return (await this.api('GET', `/servers/${serverId}`)).server; }
+  /**
+   * Live counts for a "Members: N / Online: N" counter: { member_count, online_count }. Online is refreshed once a
+   * minute, so ask every few minutes (member_join / member_leave carry member_count in between).
+   * @see https://www.yapin.gg/developers/api/servers#get-servers-id-counts
+   */
+  async memberCounts(serverId) { return this.api('GET', `/servers/${serverId}/counts`); }
+  /** @see https://www.yapin.gg/developers/api/roles#get-servers-id-roles */
   async roles(serverId) { return (await this.api('GET', `/servers/${serverId}/roles`)).roles; }
-  /** One member: profile, nickname, role ids, timeout. */
+  /** One member: profile, nickname, role ids, timeout. @see https://www.yapin.gg/developers/api/servers#get-servers-id-members-uid */
   async member(serverId, userId) { return (await this.api('GET', `/servers/${serverId}/members/${userId}`)).member; }
+  /** @see https://www.yapin.gg/developers/api/roles#put-servers-id-members-uid-roles-rid */
   async addRole(serverId, userId, roleId) { return this.api('PUT', `/servers/${serverId}/members/${userId}/roles/${roleId}`); }
+  /** @see https://www.yapin.gg/developers/api/roles#delete-servers-id-members-uid-roles-rid */
   async removeRole(serverId, userId, roleId) { return this.api('DELETE', `/servers/${serverId}/members/${userId}/roles/${roleId}`); }
-  /** Set someone's nickname ('' clears it). */
+
+  // ---- managing roles (Manage Roles; only roles below the bot's highest, only permissions the bot has itself) ----
+  /**
+   * Make a role, just below the bot's highest: createRole(server, { name: 'Mods', color: '#5865f2', mentionable: false,
+   * permissions: { kick_members: true } }). Returns the role. 30 role and permission changes a minute per bot.
+   * @see https://www.yapin.gg/developers/api/roles#post-servers-id-roles
+   */
+  async createRole(serverId, { name, color, mentionable, permissions } = {}) {
+    return (await this.api('POST', `/servers/${serverId}/roles`, { name, color, mentionable, permissions })).role;
+  }
+  /** Change a role: { name, color, mentionable, permissions (only the keys you pass change), position }. Returns the role. @see https://www.yapin.gg/developers/api/roles#patch-servers-id-roles-rid */
+  async editRole(serverId, roleId, { name, color, mentionable, permissions, position } = {}) {
+    return (await this.api('PATCH', `/servers/${serverId}/roles/${roleId}`, { name, color, mentionable, permissions, position })).role;
+  }
+  /** @see https://www.yapin.gg/developers/api/roles#delete-servers-id-roles-rid */
+  async deleteRole(serverId, roleId) { return this.api('DELETE', `/servers/${serverId}/roles/${roleId}`); }
+  // ---- custom emojis (Manage Emoji; 30 changes a minute per bot; in testing, flag bot_emojis) ----
+  /** The server's custom emojis: { emojis: [{ id, name, animated, url, … }], limit } (limit = emoji slots). @see https://www.yapin.gg/developers/api/emojis#get-servers-id-emojis */
+  async emojis(serverId) { return this.api('GET', `/servers/${serverId}/emojis`); }
+  /**
+   * Add a custom emoji: createEmoji(server, 'party', './party.gif'). The picture: a file path (Node), a Blob/File or
+   * bytes (Uint8Array/Buffer). PNG, GIF or WebP up to 1 MB. Checked like every new emoji. Returns the emoji, or null
+   * when the check wasn't sure and it waits for a moderator.
+   * @see https://www.yapin.gg/developers/api/emojis#post-servers-id-emojis
+   */
+  async createEmoji(serverId, name, image) {
+    let bytes = image;
+    if (typeof image === 'string') bytes = await (await import('node:fs/promises')).readFile(image);
+    else if (typeof Blob !== 'undefined' && image instanceof Blob) bytes = new Uint8Array(await image.arrayBuffer());
+    if (!(bytes instanceof Uint8Array)) throw new Error('Pass a file path, a Blob or bytes');
+    let b64;
+    if (typeof Buffer !== 'undefined') b64 = Buffer.from(bytes).toString('base64');
+    else { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); b64 = btoa(s); }
+    return (await this.api('POST', `/servers/${serverId}/emojis`, { name, image: b64 })).emoji;
+  }
+  /** Rename a custom emoji. Returns the emoji. @see https://www.yapin.gg/developers/api/emojis#patch-servers-id-emojis-eid */
+  async editEmoji(serverId, emojiId, name) { return (await this.api('PATCH', `/servers/${serverId}/emojis/${emojiId}`, { name })).emoji; }
+  /** @see https://www.yapin.gg/developers/api/emojis#delete-servers-id-emojis-eid */
+  async deleteEmoji(serverId, emojiId) { return this.api('DELETE', `/servers/${serverId}/emojis/${emojiId}`); }
+  /**
+   * The custom emojis in one message (text, embeds, buttons, reactions), from any server: [{ id, name, animated, url,
+   * in_server, text }]. For steal emoji commands. Read Message History; in testing (flag bot_emoji_lookup).
+   * @see https://www.yapin.gg/developers/api/emojis#get-channels-id-messages-mid-emojis
+   */
+  async messageEmojis(channelId, messageId) { return (await this.api('GET', `/channels/${channelId}/messages/${messageId}/emojis`)).emojis; }
+  /**
+   * Copy an emoji into a server (the bot needs Manage Emoji there): `emoji` is one from messageEmojis(). Downloads its
+   * picture and adds it like createEmoji, under `name` (default: its own name). Returns the new emoji, or null when it
+   * waits for a moderator.
+   *   bot.command('steal', 'Copy an emoji', async (msg) => {
+   *     const [e] = await bot.messageEmojis(msg.channel_id, msg.reply_to_id || msg.id);
+   *     if (!e) return msg.reply('No custom emoji there');
+   *     const added = await bot.stealEmoji(msg.server_id, e, msg.argv[0]);
+   *     await msg.reply(added ? `Added ${added.name}` : 'Sent for a check');
+   *   });
+   */
+  async stealEmoji(serverId, emoji, name) {
+    if (!emoji || typeof emoji.url !== 'string' || !emoji.url) throw new Error('stealEmoji needs an emoji from messageEmojis()');
+    const res = await fetch(emoji.url);
+    if (!res.ok) throw new Error(`Couldn't download that emoji (${res.status})`);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    return this.createEmoji(serverId, name || emoji.name, bytes);
+  }
+  /** @everyone's permissions (the basic ones): setEveryonePerms(server, { send_messages: false }). @see https://www.yapin.gg/developers/api/roles#patch-servers-id-roles-everyone */
+  async setEveryonePerms(serverId, permissions) { return this.api('PATCH', `/servers/${serverId}/roles/everyone`, { permissions }); }
+  /** A channel's permission overrides: [{ role_id (null = @everyone), allow, deny }]. @see https://www.yapin.gg/developers/api/channels#get-channels-id-permissions */
+  async channelPermissions(channelId) { return (await this.api('GET', `/channels/${channelId}/permissions`)).overrides; }
+  /**
+   * Allow or deny permissions for a role (or 'everyone') in one channel: setChannelPermissions(ch, roleId,
+   * { allow: ['send_messages'], deny: ['view_channel'] }). Empty lists remove the override.
+   * @see https://www.yapin.gg/developers/api/channels#put-channels-id-permissions-role
+   */
+  async setChannelPermissions(channelId, roleId, { allow = [], deny = [] } = {}) {
+    return this.api('PUT', `/channels/${channelId}/permissions/${roleId}`, { allow, deny });
+  }
+  /** @see https://www.yapin.gg/developers/api/channels#delete-channels-id-permissions-role */
+  async clearChannelPermissions(channelId, roleId) { return this.api('DELETE', `/channels/${channelId}/permissions/${roleId}`); }
+  /** The same for a whole category (its channels follow it unless they have their own). @see https://www.yapin.gg/developers/api/channels#put-servers-id-categories-cid-permissions-role */
+  async setCategoryPermissions(serverId, categoryId, roleId, { allow = [], deny = [] } = {}) {
+    return this.api('PUT', `/servers/${serverId}/categories/${categoryId}/permissions/${roleId}`, { allow, deny });
+  }
+  /** @see https://www.yapin.gg/developers/api/channels#delete-servers-id-categories-cid-permissions-role */
+  async clearCategoryPermissions(serverId, categoryId, roleId) { return this.api('DELETE', `/servers/${serverId}/categories/${categoryId}/permissions/${roleId}`); }
+  /** Set someone's nickname ('' clears it). @see https://www.yapin.gg/developers/api/moderation#patch-servers-id-members-uid */
   async setNickname(serverId, userId, nickname) { return this.api('PATCH', `/servers/${serverId}/members/${userId}`, { nickname }); }
+  /** @see https://www.yapin.gg/developers/api/moderation#post-servers-id-kick */
   async kick(serverId, userId) { return this.api('POST', `/servers/${serverId}/kick`, { user_id: userId }); }
+  /** @see https://www.yapin.gg/developers/api/moderation#post-servers-id-bans */
   async ban(serverId, userId) { return this.api('POST', `/servers/${serverId}/bans`, { user_id: userId }); }
+  /** @see https://www.yapin.gg/developers/api/moderation#delete-servers-id-bans-uid */
   async unban(serverId, userId) { return this.api('DELETE', `/servers/${serverId}/bans/${userId}`); }
+  /** @see https://www.yapin.gg/developers/api/moderation#get-servers-id-bans */
   async bans(serverId) { return (await this.api('GET', `/servers/${serverId}/bans`)).bans; }
-  /** Time someone out for `minutes` (0 clears it). */
+  /**
+   * The server's invites: [{ code, url, inviter_id, uses, max_uses, expires_at, vanity, created_at }]. Needs Manage Server.
+   * Yapin’ invites don't run out: max_uses is 0 (no limit) and expires_at null.
+   * @see https://www.yapin.gg/developers/api/moderation#get-servers-id-invites
+   */
+  async invites(serverId) { return (await this.api('GET', `/servers/${serverId}/invites`)).invites; }
+  /** Time someone out for `minutes` (0 clears it). @see https://www.yapin.gg/developers/api/moderation#post-servers-id-timeouts */
   async timeout(serverId, userId, minutes, reason = '') { return this.api('POST', `/servers/${serverId}/timeouts`, { user_id: userId, minutes, reason }); }
 
   // ---- voice (Move Members for moves; 30 moves and 60 lookups a minute per bot) ----
-  /** Who is in voice: [{ channel_id, user_ids }] for every voice channel the bot can see (empty ones too). */
+  /** Who is in voice: [{ channel_id, user_ids }] for every voice channel the bot can see (empty ones too). @see https://www.yapin.gg/developers/api/voice#get-servers-id-voice */
   async voice(serverId) { return (await this.api('GET', `/servers/${serverId}/voice`)).voice; }
-  /** Move someone who is in voice to another voice channel of the server (Move Members). */
+  /** Move someone who is in voice to another voice channel of the server (Move Members). @see https://www.yapin.gg/developers/api/voice#post-servers-id-voice-move */
   async moveMember(serverId, userId, channelId) { return this.api('POST', `/servers/${serverId}/voice/move`, { user_id: userId, channel_id: channelId }); }
-  /** Drop someone from voice (Move Members). */
+  /** Drop someone from voice (Move Members). @see https://www.yapin.gg/developers/api/voice#post-servers-id-voice-disconnect */
   async disconnectMember(serverId, userId) { return this.api('POST', `/servers/${serverId}/voice/disconnect`, { user_id: userId }); }
 
   // ---- the bot in voice: music bots (10 joins and leaves a minute; one voice channel per server) ----
@@ -551,9 +835,10 @@ export class Bot {
    * A ticket for a voice channel: { url, token, e2ee, voice_muted, channel_id, server_id }. Connect with any LiveKit SDK
    * within a minute. The bot can send one audio track (as a mic) and hears nobody. Joining another channel of the
    * same server drops it from the first. Most bots want connectVoice below, which does all of it.
+   * @see https://www.yapin.gg/developers/api/voice#post-servers-id-voice-join
    */
   async joinVoice(serverId, channelId) { return this.api('POST', `/servers/${serverId}/voice/join`, { channel_id: channelId }); }
-  /** Take the bot out of voice in that server (also works when its own code has lost track of the call). */
+  /** Take the bot out of voice in that server (also works when its own code has lost track of the call). @see https://www.yapin.gg/developers/api/voice#post-servers-id-voice-leave */
   async leaveVoice(serverId) { return this.api('POST', `/servers/${serverId}/voice/leave`); }
   /**
    * Join a voice channel and get an audio source to play into, with @livekit/rtc-node (npm i @livekit/rtc-node). You
@@ -584,28 +869,87 @@ export class Bot {
         ratchetWindowSize: 0, failureTolerance: -1, keyRingSize: 16, keyDerivationFunction: 1,
       },
     } : null;
-    await room.connect(t.url, t.token, { autoSubscribe: false, dynacast: false, ...(encryption ? { encryption } : {}) });
+    // `e2ee`, not `encryption`: `encryption` also encrypts data messages with the media key, so the key handoff below
+    // went out sealed under the very key it carries. The app (media only, lib/callCrypto.ts) never read it, never got
+    // our key and dropped every frame: the bot glowed green (the server sees audio levels) but nobody heard it.
+    await room.connect(t.url, t.token, { autoSubscribe: false, dynacast: false, ...(encryption ? { e2ee: encryption } : {}) });
     const keys = mediaKey ? await handOutVoiceKey(room, subtle, mediaKey) : null;
     const source = new rtc.AudioSource(sampleRate, channels);
     const track = rtc.LocalAudioTrack.createAudioTrack('audio', source);
-    const opts = new rtc.TrackPublishOptions({ source: rtc.TrackSource.SOURCE_MICROPHONE, dtx: false, audioEncoding: { maxBitrate: BigInt(bitrate) } });
+    const opts = new rtc.TrackPublishOptions({ source: rtc.TrackSource.SOURCE_MICROPHONE, dtx: false, red: false, audioEncoding: { maxBitrate: BigInt(bitrate) } });
     await room.localParticipant.publishTrack(track, opts);
     return { room, source, track, e2ee: !!mediaKey, leave: async () => { keys?.stop(); await room.disconnect(); } };
   }
 
   // ---- channels ----
-  async createChannel(serverId, name, { kind = 'text', categoryId = null } = {}) { return (await this.api('POST', `/servers/${serverId}/channels`, { name, kind, category_id: categoryId })).channel; }
-  /** Change a channel: { name, categoryId, private, roleIds, readOnly, postRoleIds, slowmode }. */
+  // ---- webhooks (flag bot_webhooks; the bot needs Manage Webhooks in that channel) ----
+  /**
+   * Make a webhook in a text channel and post through it with a different name and picture per message
+   * (PluralKit style): `const hook = await bot.createWebhook(ch, 'Proxy');
+   * await hook.send({ content: 'hi!', username: 'Alice', avatarUrl: 'https://i.imgur.com/abc.png' })`.
+   * The message shows a BOT tag. `hook.token` and `hook.url` (the secret URL) only come back here; the bot token is
+   * enough to post, so you don't need to keep them. Up to 10 webhooks a channel, 10 makes + deletes a minute.
+   * @see https://www.yapin.gg/developers/api/webhooks#post-channels-id-webhooks
+   */
+  async createWebhook(channelId, name) { return this.wrapWebhook((await this.api('POST', `/channels/${channelId}/webhooks`, { name })).webhook); }
+  /** Every webhook in a channel (people's too, without tokens). @see https://www.yapin.gg/developers/api/webhooks#get-channels-id-webhooks */
+  async webhooks(channelId) { return (await this.api('GET', `/channels/${channelId}/webhooks`)).webhooks.map((w) => this.wrapWebhook(w)); }
+  /** The bot's own webhooks in every server, newest first: find them again after a restart. @see https://www.yapin.gg/developers/api/webhooks#get-webhooks */
+  async myWebhooks() { return (await this.api('GET', '/webhooks')).webhooks.map((w) => this.wrapWebhook(w)); }
+  /** Delete a webhook (its old messages stay). @see https://www.yapin.gg/developers/api/webhooks#delete-webhooks-id */
+  async deleteWebhook(webhookId) { return this.api('DELETE', `/webhooks/${webhookId}`); }
+  /**
+   * Post through one of the bot's own webhooks. `content` is the text, or an object with all of it:
+   * `{ content, username, avatarUrl, embeds, components, allowedMentions }`. avatarUrl must be an https link to
+   * Yapin’ uploads or a known image host (like embed pictures). Components: link buttons only. Returns the message.
+   * Limits: 5 per 2 seconds per webhook, 30 a minute per channel, plus the bot's own message limits.
+   * @see https://www.yapin.gg/developers/api/webhooks#post-webhooks-id
+   */
+  async sendWebhook(webhookId, content, opts = {}) {
+    if (content && typeof content === 'object' && !Array.isArray(content) && !(content instanceof Embed)) { opts = content; content = content.content; }
+    const body = {
+      content: String(content ?? ''), username: opts.username ?? undefined, avatar_url: opts.avatarUrl ?? opts.avatar_url ?? undefined,
+      embeds: list(opts.embeds || undefined), components: list(opts.components || undefined), allowed_mentions: opts.allowedMentions ?? opts.allowed_mentions ?? undefined
+    };
+    return (await this.api('POST', `/webhooks/${webhookId}`, body)).message;
+  }
+  /** A webhook's data -> a webhook with send(content | { content, username, avatarUrl, ... }) and delete(). */
+  wrapWebhook(data) {
+    const bot = this;
+    return {
+      ...data,
+      /** Post as this webhook: `hook.send('hi', { username: 'Alice' })` or `hook.send({ content: 'hi', username: 'Alice', avatarUrl })`. */
+      send(content, opts = {}) { return bot.sendWebhook(data.id, content, opts); },
+      /** Delete it. */
+      delete() { return bot.deleteWebhook(data.id); },
+    };
+  }
+
+  /** @see https://www.yapin.gg/developers/api/channels#post-servers-id-channels */
+  async createChannel(serverId, name, { kind = 'text', categoryId } = {}) { return (await this.api('POST', `/servers/${serverId}/channels`, { name, kind, category_id: categoryId })).channel; }
+  /** Change a channel: { name, categoryId, private, roleIds, readOnly, postRoleIds, slowmode }. @see https://www.yapin.gg/developers/api/channels#patch-channels-id */
   async editChannel(channelId, changes = {}) {
     const { name, categoryId, private: priv, roleIds, readOnly, postRoleIds, slowmode } = changes;
     return (await this.api('PATCH', `/channels/${channelId}`, { name, category_id: categoryId, private: priv, role_ids: roleIds, read_only: readOnly, post_role_ids: postRoleIds, slowmode })).channel;
   }
+  /** @see https://www.yapin.gg/developers/api/channels#delete-channels-id */
   async deleteChannel(channelId) { return this.api('DELETE', `/channels/${channelId}`); }
+  /** @see https://www.yapin.gg/developers/api/channels#post-servers-id-categories */
   async createCategory(serverId, name) { return (await this.api('POST', `/servers/${serverId}/categories`, { name })).category; }
+  /** @see https://www.yapin.gg/developers/api/channels#delete-servers-id-categories-cid */
   async deleteCategory(serverId, categoryId) { return this.api('DELETE', `/servers/${serverId}/categories/${categoryId}`); }
 
+  // ---- events (in testing) ----
+  /** Upcoming and live events of a server. @see https://www.yapin.gg/developers/api/scheduled-events#get-servers-id-events */
+  async events(serverId) { return (await this.api('GET', `/servers/${serverId}/events`)).events; }
+  /** Make an event: { title, startsAt (Date or ISO), endsAt, channelId (voice) or location, announceChannelId, repeat: 'none'|'weekly', tz, description }. Manage Events. @see https://www.yapin.gg/developers/api/scheduled-events#post-servers-id-events */
+  async createEvent(serverId, { title, startsAt, endsAt, channelId, location, announceChannelId, repeat, tz, description } = {}) {
+    const iso = (d) => (d instanceof Date ? d.toISOString() : d);
+    return (await this.api('POST', `/servers/${serverId}/events`, { title, starts_at: iso(startsAt), ends_at: iso(endsAt) ?? null, channel_id: channelId, location, announce_channel_id: announceChannelId, repeat, tz, description })).event;
+  }
+
   // ---- DMs ----
-  /** Open a DM with someone (they must allow DMs from the bot: a friend, or sharing a server, depending on their setting). Returns the channel id; then bot.send(channelId, …). */
+  /** Open a DM with someone (they must allow DMs from the bot: a friend, or sharing a server, depending on their setting). Returns the channel id; then bot.send(channelId, …). @see https://www.yapin.gg/developers/api/users#post-users-id-dm */
   async dm(userId) { return (await this.api('POST', `/users/${userId}/dm`)).channel_id; }
   /** Open a DM and send one message in it. */
   dmSend(userId, content, opts = {}) { return this.#soft(this.dm(userId).then((cid) => this.send(cid, content, opts))); }
@@ -621,7 +965,7 @@ export class Bot {
       bytes = new Uint8Array(await image.arrayBuffer());
     }
     if (!type) throw new Error('Pass the image type too, like "image/png"');
-    const res = await fetch(this.base + path, { method: 'PUT', headers: { authorization: `Bot ${this.token}`, 'content-type': type, 'user-agent': 'yapper-sdk/1' }, body: bytes });
+    const res = await fetch((this._fallback && Date.now() < this._fallbackUntil ? this._fallback : this.base) + path, { method: 'PUT', headers: { authorization: `Bot ${this.token}`, 'content-type': type, 'user-agent': `yapper-sdk/${VERSION}` }, body: bytes });
     const out = await res.json().catch(() => ({}));
     if (!res.ok) { const err = new Error(out.error || `upload failed (${res.status})`); err.status = res.status; throw err; }
     return out;
@@ -632,6 +976,17 @@ export class Bot {
    * no permission) Node would crash on the unhandled rejection; instead the error goes to on('error') / the
    * log. Code that awaits or .catch()es the call gets the error as usual and nothing extra is reported.
    */
+  /** One API call over the gateway socket: { status, body }, or { lost: true } when the socket went before the answer. */
+  #viaGateway(method, path, body, timeout) {
+    const ws = this._ws;
+    const id = String(++this._gwNext);
+    return new Promise((resolve) => {
+      const t = setTimeout(() => { this._gwPending.delete(id); resolve({ lost: true }); }, timeout);
+      this._gwPending.set(id, (r) => { clearTimeout(t); this._gwPending.delete(id); resolve(r); });
+      try { ws.send(JSON.stringify({ op: 'request', id, method, path, body })); } catch { this._gwPending.get(id)?.({ lost: true }); }
+    });
+  }
+
   #soft(p) {
     let seen = false;
     p.catch((e) => { if (!seen) void this.fail(e); });
@@ -653,13 +1008,14 @@ export class Bot {
     else if (this.log) console.error(e?.cog ? `[yapper] [${e.cog}${e.where ? ` ${e.where}` : ''}]` : '[yapper]', e?.message || e);
   }
 
-  /** Register the commands with Yapin’ and start fetching events. Resolves when stopped. */
+  /** Register the commands with Yapin’ and start fetching events. Resolves when stopped. @see https://www.yapin.gg/developers/api/events#get-events @see https://www.yapin.gg/developers/api/bot#get-me @see https://www.yapin.gg/developers/api/bot#put-commands */
   async start() {
     if (this.running) return;
     this.running = true;
     // Cogs still loading (bot.load() without await) finish first, so their commands are in the list.
     if (this._pending.size) await Promise.allSettled([...this._pending]);
     if (this.log) console.log('[yapper] connecting…');
+    void checkVersion(this.base, this.log);
     let list = [];
     let first;
     // Startup calls retry through network blips and server hiccups too (a bad token still stops right away).
@@ -668,7 +1024,9 @@ export class Bot {
         this.me = await this.api('GET', '/me');
         this._dirty = false;
         list = this.#commandList();
-        await this.api('PUT', '/commands', { commands: list });
+        // interactions: true = commands picked from the / menu come as command events (nothing posted in chat) and
+        // msg.reply answers them; Yapin’ shows "<user> used /cmd" above the answer. Typed "!cmd" still comes as a message.
+        await this.api('PUT', '/commands', { commands: list, interactions: true });
         this._registered = true;
         // Skip events from before we started.
         first = await this.api('GET', '/events?after=0&wait=0');
@@ -750,7 +1108,8 @@ export class Bot {
         // Detached first: closing from inside a handler can fire "error" again right away.
         ws.onmessage = null; ws.onerror = null; ws.onclose = null;
         clearInterval(beat); clearTimeout(slow);
-        if (this._ws === ws) this._ws = null;
+        if (this._ws === ws) { this._ws = null; this._gwRequests = false; }
+        for (const done of [...this._gwPending.values()]) done({ lost: true });
         chain.then(() => resolve(r));
       };
       // A socket that never gets to ready (or a dead one whose close never comes) doesn't hold the bot up.
@@ -762,7 +1121,8 @@ export class Bot {
         else if (msg.op === 'ready') {
           readyAt = Date.now();
           clearTimeout(slow);
-          if (this.log) console.log('[yapper] connected to the gateway');
+          this._gwRequests = msg.requests === true;
+          if (this.log) console.log(`[yapper] connected to the gateway${this._gwRequests ? ' (API calls over it too)' : ''}`);
           beat = setInterval(() => {
             // No answer to the last heartbeat: the connection is dead, start over.
             if (!acked) { finish('ok'); try { ws.close(4000, 'no heartbeat ack'); } catch { /* closed */ } return; }
@@ -770,6 +1130,7 @@ export class Bot {
             ws.send(JSON.stringify({ op: 'heartbeat' }));
           }, msg.heartbeat_interval || 30_000);
         } else if (msg.op === 'heartbeat_ack') acked = true;
+        else if (msg.op === 'response' && typeof msg.id === 'string') this._gwPending.get(msg.id)?.({ status: Number(msg.status) || 0, body: msg.body });
         else if (msg.op === 'event' && msg.d) {
           const ev = msg.d;
           chain = chain.then(async () => {
@@ -803,15 +1164,15 @@ export class Bot {
       const msg = this.wrap(data);
       let name = data.command;
       let args = data.args;
-      const content = String(data.content ?? '');
       // "/fish @OtherBot": a command picked for another bot (command_for) isn't ours to answer, even if we have /fish.
       const forOther = Array.isArray(data.command_for) && !data.command_for.includes(this.me?.id);
       if (!name && !forOther) {
         // Commands typed with another prefix, or ones we didn't register. A prefix can be longer than one
         // character ('yap!'); the longest one that fits goes first so '!!' wins over '!'.
+        const content = data.content || '';
         for (const p of [...this.prefixes].sort((a, b) => b.length - a.length)) {
           if (!p || !content.startsWith(p)) continue;
-          const m = /^([a-z0-9\_-]{1,32})(?:\s+([\s\S]*))?$/i.exec(content.slice(p.length));
+          const m = /^([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i.exec(content.slice(p.length));
           if (m && this.commands.has(m[1].toLowerCase())) { name = m[1].toLowerCase(); args = (m[2] || '').trim(); break; }
         }
       }
@@ -824,19 +1185,41 @@ export class Bot {
         let ok = true;
         if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
         if (ok) {
-          Promise.resolve().then(() => c.fn(msg)).catch(e => this.fail(e));
+          try { await c.fn(msg); } catch (e) { await this.fail(e); }
           await this.emit('command', msg);
         }
       }
       await this.emit('message', msg);
+    } else if (ev.type === 'command') {
+      // A slash command picked from the / menu (flag bot_slash_interactions): nothing was posted in chat. msg works
+      // like a command message; msg.reply answers it (shown with "<user> used /cmd"), msg.ephemeral only to them.
+      const msg = this.wrapCommand(data);
+      const c = this.commands.get(msg.command);
+      if (!c) { await this.respond(data, 'ephemeral', { content: `/${msg.command} isn't a command of this bot anymore` }).catch(() => { }); return; }
+      let ok = true;
+      if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
+      if (ok) {
+        try { await c.fn(msg); } catch (e) { await this.fail(e); }
+        await this.emit('command', msg);
+      }
     } else if (ev.type === 'interaction') {
       const i = this.wrapInteraction(data);
+      const kind = data.type === 'select' || data.type === 'modal_submit' ? data.type : 'button';
       for (const b of this.buttons) {
+        if ((b.kind || 'button') !== kind) continue;
         // lastIndex reset: a /g or /y pattern keeps its place between tests, which made every other click miss.
         const hit = b.match instanceof RegExp ? ((b.match.lastIndex = 0), b.match.test(data.custom_id)) : b.match === data.custom_id;
         if (hit) { try { await b.fn(i); } catch (e) { await this.fail(e); } }
       }
       await this.emit('interaction', i);
+    } else if (ev.type === 'dm_message') {
+      // A DM to this bot. Commands aren't run here (they are for servers); answer in onDm / on('dm_message').
+      if (this.ignoreBots && data.author_bot) return;
+      const msg = this.wrap(data);
+      msg.dm = true;
+      msg.is_dm = true;
+      msg.dm_channel_id ||= data.channel_id;
+      await this.emit('dm_message', msg);
     } else {
       await this.emit(ev.type, { ...data, type: ev.type });
     }
@@ -857,8 +1240,43 @@ export class Bot {
       update(changes = {}) { return bot.respond(data, 'update', changes); },
       /** Just say "got it", so the person doesn't see an error. */
       ack() { return bot.respond(data, 'ack'); },
+      /** Open a form for the person (a Modal). Only as the first answer, not to a modal_submit. Flag bot_modals. */
+      showModal(modal) { return bot.respond(data, 'modal', { modal }); },
       /** <@id> for the person who clicked. */
       get userMention() { return `<@${data.user_id}>`; },
+    };
+  }
+
+  /**
+   * A command event as a command message: command, args, argv, author_id, author, channel_id, server_id, content
+   * ("/roll 2d6"), interaction (true). reply / say answer it (files go as a normal message), ephemeral answers only the
+   * person who used it, ack just says "got it".
+   */
+  wrapCommand(data) {
+    const bot = this;
+    const args = typeof data.args === 'string' ? data.args : '';
+    const answer = (type, content, opts = {}) => {
+      if (opts.files) return bot.send(data.channel_id, content, opts);
+      const { embeds, components, layout } = opts;
+      return bot.respond(data, type, { content, embeds, components, layout }).then((out) => out?.message ?? null);
+    };
+    return {
+      ...data,
+      id: data.id, interaction: true, command: data.command, args, argv: args ? args.split(/\s+/) : [],
+      author_id: data.user_id, author: data.username ?? null, author_bot: false, mentioned: true,
+      content: `/${data.command}${args ? ` ${args}` : ''}`,
+      /** Answer the command (a new message, with "<user> used /cmd" above it). */
+      reply(content, opts = {}) { return answer('reply', content, opts); },
+      /** Same as reply. */
+      say(content, opts = {}) { return answer('reply', content, opts); },
+      /** Only the person who used the command sees it. Text and embeds. */
+      ephemeral(content, opts = {}) { return answer('ephemeral', content, opts); },
+      /** Just "got it", no message. */
+      ack() { return bot.respond(data, 'ack'); },
+      /** Open a form for the person who used it (a Modal, flag bot_modals). Only as the first answer; it comes back to onModal. */
+      showModal(modal) { return bot.respond(data, 'modal', { modal }); },
+      /** <@id> for the person who used it. */
+      get authorMention() { return `<@${data.user_id}>`; },
     };
   }
 
@@ -876,6 +1294,14 @@ export class Bot {
       get authorMention() { return `<@${data.author_id}>`; },
     };
   }
+}
+
+/** A reaction listener that only fires for reactions on the bot's own messages, with `added` set. */
+function mineOnly(bot, fn) {
+  return (ev) => {
+    if (!ev || !bot.me?.id || ev.message_author_id !== bot.me.id) return undefined;
+    return fn({ ...ev, added: ev.type === 'reaction_add' });
+  };
 }
 
 /**
@@ -905,7 +1331,7 @@ export class Cog {
  * Builds an embed card. Every setter returns the embed, so they chain:
  *   new Embed().title('Score').url('https://…').description('**3** wins').color('#57f287')
  *     .field('Kills', '12', true).field('Deaths', '4', true).thumbnail(url).footer('Season 2').timestamp()
- * Pictures must be https links to Yapin’ uploads or common image hosts (imgur, tenor, giphy, github, wikimedia, AniList, MyAnimeList…; full list on /developers).
+ * Pictures must be https links to Yapin’ uploads or common image hosts (imgur, tenor, giphy, github, wikimedia, AniList, MyAnimeList, Roblox CDN…; full list on /developers).
  * Limits: title 256, description 4096, 10 fields (name 256, value 1024), 6000 characters in all.
  */
 export class Embed {
@@ -942,15 +1368,80 @@ export class Button {
   static link(label, url) { return new Button({ style: 'link', label, url }); }
   style(s) { this.data.style = s; return this; }
   label(t) { this.data.label = String(t); return this; }
-  /** One emoji: '🔥' or a server emoji '<:name:id>'. */
-  emoji(e) { this.data.emoji = String(e); return this; }
+  /** One emoji: '🔥', a server emoji '<:name:id>' or { id, name, animated }. */
+  emoji(e) { this.data.emoji = e && typeof e === 'object' ? { ...e } : String(e); return this; }
   id(customId) { this.data.custom_id = String(customId); return this; }
   url(u) { this.data.style = 'link'; this.data.url = String(u); delete this.data.custom_id; return this; }
   disabled(on = true) { this.data.disabled = !!on; return this; }
   toJSON() { return this.data; }
 }
 
-/** A row of up to 5 buttons. Works under a normal message and inside a Components V2 layout. */
+/**
+ * A select menu (dropdown), alone in its row: new Row(new Select('food').option('Pizza', 'pizza').option('Taco', 'taco')).
+ * Picks come to onSelect with i.values. Up to 25 options; min/max picks default to 1. In a Modal give it a label.
+ * In testing (flag bot_selects).
+ */
+export class Select {
+  constructor(customId, options = []) {
+    this.data = { type: 'select', custom_id: String(customId), options: [] };
+    for (const o of options) this.data.options.push(plain(o));
+  }
+  /** One choice: label shown, value sent back. opts: { description, emoji, default }. */
+  option(label, value, { description, emoji, default: on } = {}) {
+    const o = { label: String(label), value: String(value ?? label) };
+    if (description) o.description = String(description);
+    if (emoji) o.emoji = typeof emoji === 'object' ? { ...emoji } : String(emoji);
+    if (on) o.default = true;
+    this.data.options.push(o);
+    return this;
+  }
+  placeholder(t) { this.data.placeholder = String(t); return this; }
+  /** Fewest picks (0 to 25). */
+  min(n) { this.data.min_values = n; return this; }
+  /** Most picks (1 to 25). */
+  max(n) { this.data.max_values = n; return this; }
+  disabled(on = true) { this.data.disabled = !!on; return this; }
+  /** In a Modal: the question above it. */
+  label(t) { this.data.label = String(t); return this; }
+  /** In a Modal: must something be picked (default true). */
+  required(on = true) { this.data.required = !!on; return this; }
+  /** In a Modal: smaller text under the label. */
+  description(t) { this.data.description = String(t); return this; }
+  toJSON() { return this.data; }
+}
+
+/**
+ * A text box for a Modal: TextInput.short('name', 'Your name') or TextInput.paragraph('why', 'Why?').
+ * Answers come back in i.values[customId] ("" when an optional one is skipped). Up to 4000 characters.
+ */
+export class TextInput {
+  constructor(customId, label, style = 'short') { this.data = { type: 'text_input', custom_id: String(customId), label: String(label), style }; }
+  static short(customId, label) { return new TextInput(customId, label, 'short'); }
+  static paragraph(customId, label) { return new TextInput(customId, label, 'paragraph'); }
+  /** Must be filled in (default true). */
+  required(on = true) { this.data.required = !!on; return this; }
+  /** Fewest and most characters. */
+  length(min, max) { if (min !== undefined && min !== null) this.data.min_length = min; if (max !== undefined && max !== null) this.data.max_length = max; return this; }
+  /** Filled in already. */
+  value(v) { this.data.value = String(v); return this; }
+  placeholder(t) { this.data.placeholder = String(t); return this; }
+  /** Smaller text under the label. */
+  description(t) { this.data.description = String(t); return this; }
+  toJSON() { return this.data; }
+}
+
+/**
+ * A form that pops up for the person: i.showModal(new Modal('apply', 'Apply', TextInput.paragraph('why', 'Why?'))).
+ * Up to 5 inputs (TextInput or Select with a label). It comes back to onModal('apply', (i) => …) with i.values.
+ * Only as the first answer to a click, a pick or a /command (msg.showModal). In testing (flag bot_modals).
+ */
+export class Modal {
+  constructor(customId, title, ...inputs) { this.customId = String(customId); this.title = String(title); this.inputs = inputs.flat(); }
+  add(...inputs) { this.inputs.push(...inputs.flat()); return this; }
+  toJSON() { return { custom_id: this.customId, title: this.title, components: this.inputs.map(plain) }; }
+}
+
+/** A row of up to 5 buttons, or one Select. Works under a normal message and inside a Components V2 layout. */
 export class Row {
   constructor(...buttons) { this.buttons = buttons.flat(); }
   add(...buttons) { this.buttons.push(...buttons.flat()); return this; }

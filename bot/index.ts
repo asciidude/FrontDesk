@@ -1,5 +1,5 @@
 import Database, { type Database as DB } from 'better-sqlite3';
-import { Bot, Embed } from '../dependencies/yapper';
+import { Bot, Embed } from '../dependencies/yapper.js';
 import { checkPermissions } from '../utils/checkPermissions';
 import { MessageSwitchboard } from '../utils/MessageSwitchboard';
 import { createTicket } from '../utils/createTicket';
@@ -118,6 +118,8 @@ bot.on('dm_message', (msg: any) => {
 });
 
 bot.on('interaction', async (i: any) => {
+    console.log(i.custom_id, i);
+
     if (i.custom_id === 'setup:cancel') {
         let currentSetup = activeSetups.get(i.server_id);
         if(!currentSetup || i.user_id !== currentSetup.authorId)

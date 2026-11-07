@@ -1,4 +1,4 @@
-import { Cog } from '../../dependencies/yapper';
+import { Cog } from '../../dependencies/yapper.js';
 
 export class Utils extends Cog {
     commands = {
