@@ -184,15 +184,49 @@ bot.on('dm_message', (msg: any) => {
         return;
     }
 
+    if(ticket.status === 'closed') {
+        db.prepare(`
+            UPDATE users
+            SET active_ticket = NULL
+            WHERE user_id = ?
+            AND active_ticket = ?
+        `).run(userId, activeTicket);
+
+        bot.dmSend(userId, 'Your selected ticket was closed. Subsequently, your active ticket has been cleared.\nUse \`/tickets\` to view your active tickets.');
+        return;
+    }
+
     bot.send(
         ticket.channel_id,
         `<@${userId}>: ${msg.content}`
     );
 });
 
-bot.on('message', (msg: any) => {
+bot.on('message', async (msg: any) => {
     // Transmit message (server -> dms)
-    console.log(msg);
+    const channel = await bot.channel(msg.channel_id);
+
+    if(channel.name.startsWith('ticket-')) {
+        const ticketId = channel.name.slice('tickets-'.length);
+        
+        const ticket: any = db.prepare(`
+            SELECT *
+            FROM tickets
+            WHERE ticket_id = ?
+        `).get(ticketId);
+
+        if(!ticket) {
+            msg.reply(`\`${ticketId}\` not found - this channel may have failed to delete or be moved.`);
+            return;
+        }
+
+        if(ticket.status === 'closed') return;
+
+        bot.dmSend(
+            ticket.opened_by,
+            `<@${msg.author_id}>: ${msg.content}`
+        );
+    }
 });
 
 bot.on('interaction', async (i: any) => {
