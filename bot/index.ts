@@ -26,7 +26,7 @@ export let activeSetups = new Map<string, {
 await bot.loadCogs('./cogs');
 
 // Open the database & export it for use across the project
-export const db: DB = new Database('./db/database.db');
+export const db: DB = new Database(process.env.NODE_ENV === 'production' ? './db/database.db' : './db_dev/database.db');
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -356,7 +356,7 @@ bot.on('interaction', async (i: any) => {
                     icon_url: process.env.ICON_URL
                 },
                 timestamp: new Date()
-            })
+            });
 
             if (!ticket.updatedUser && ticketId) {
                 bot.dmSend(
@@ -366,8 +366,8 @@ bot.on('interaction', async (i: any) => {
                         embeds: [ ticketEmbed ]
                     }
                 );
-                
-                i.ack();
+
+                i.ephemeral('A new ticket has been opened - check DMs.');
             } else if (ticket.updatedUser && ticketId) {
                 bot.dmSend(
                     userId,
@@ -377,10 +377,11 @@ bot.on('interaction', async (i: any) => {
                     }
                 );
 
-                i.ack();
+                i.ephemeral('A new ticket has been opened - check DMs.');
             }
         } catch (e: any) {
             console.error(e);
+            i.ephemeral('An error occurred. If this happens again, please contact our [support team](https://yapin.gg/invite/qaFqK6zVXp).');
         }
     }
 });

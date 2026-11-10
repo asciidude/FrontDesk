@@ -90,7 +90,7 @@ export class Utils extends Cog {
 
                     await this.bot.api(
                         'PATCH',
-                        `/channels/${msg.channel_id}/messages/${message.id}`,
+                        `/channels/${message.channel_id}/messages/${message.id}`,
                         opts
                     );
                 }
@@ -561,6 +561,19 @@ export class Utils extends Cog {
                         return;
 
                     await editEmbed(setupEmbed, false);
+
+                    db.transaction(() => {
+                        db.prepare(`
+                            DELETE FROM tickets
+                            WHERE server_id = ?
+                        `).run(serverId);
+
+                        db.prepare(`
+                            DELETE FROM servers
+                            WHERE server_id = ?
+                        `).run(serverId);
+                    })();
+
                     throw e;
                 } finally {
                     await editEmbed(setupEmbed, false);
