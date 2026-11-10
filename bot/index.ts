@@ -236,7 +236,7 @@ bot.on('message', async (msg: any) => {
         if (user.active_ticket !== ticketId) {
             bot.dmSend(
                 userId,
-                `### SYSTEM MESSAGE\nYou have recieved a new message from **${server.name}** in ticket \`${ticketId}\`.\n\nSwitch to it using \`/switch ${ticketId}\` to see what was said.`
+                `You have recieved a new message from **${server.name}**.\n-# Switch to it using \`/switch ${ticketId}\` to see what was said.`
             );
 
             return;
