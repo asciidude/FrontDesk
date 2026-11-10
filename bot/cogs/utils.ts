@@ -616,6 +616,6 @@ export class Utils extends Cog {
             activeSetups.delete(ev.serverId);
         });
 
-        console.log('[COGS] Utils loaded.')
+        console.log('[COGS] Utility commands loaded.')
     };
 }
