@@ -371,7 +371,7 @@ bot.on('interaction', async (i: any) => {
             } else if (ticket.updatedUser && ticketId) {
                 bot.dmSend(
                     userId,
-                    `A new ticket has been opened, it has been automatically selected.\n\n-# **To view your active tickets,** use \`/tickets\`.`,
+                    `A new ticket has been opened, it has been automatically selected.\n-# **To view your active tickets,** use \`/tickets\`.`,
                     {
                         embeds: [ ticketEmbed ]
                     }
