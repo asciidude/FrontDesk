@@ -12,7 +12,7 @@ export class Utils extends Cog {
                 // Claim a ticket - staff or admin roles only
                 let {
                     server_id: serverId,
-                    user_id: userId,
+                    author_id: userId,
                     channel_id: channelId
                 } = msg;
 
@@ -34,12 +34,29 @@ export class Utils extends Cog {
                     return;
                 }
 
-                const ticket: any = db.prepare(`
-                    SELECT *
-                    FROM tickets
-                    WHERE channel_id = ?
-                    AND status = 'open'
-                `).get(channelId);
+                let ticket: any;
+
+                if(msg.dm) {
+                    ticket = db.prepare(`
+                        SELECT *
+                        FROM tickets
+                        WHERE opened_by = ?
+                        AND status = 'open'
+                    `).get(userId);
+                } else {
+                    ticket = db.prepare(`
+                        SELECT *
+                        FROM tickets
+                        WHERE channel_id = ?
+                        AND status = 'open'
+                    `).get(channelId);
+                }
+
+                const {
+                    opened_by: openedBy,
+                    claimed_by: claimedBy,
+                    ticket_id: ticketId
+                } = ticket;
 
                 if(!ticket) {
                     msg.reply('You must be in an open ticket to claim one.');
@@ -49,14 +66,14 @@ export class Utils extends Cog {
                 db.prepare(`
                     UPDATE tickets
                     SET claimed_by = ?
-                    WHERE channel_id = ?
-                    AND status = 'open'
-                `).run(userId, channelId);
+                    SET status = 'claimed'
+                    WHERE ticket_id = ?
+                `).run(userId, ticketId);
 
                 try {
                     this.bot.dmSend(
-                        ticket.opened_by,
-                        `<@${userId}> has claimed your ticket.\n-# From ${server.name} (ticket \`${ticket.ticket_id}\`)`
+                        openedBy,
+                        `<@${userId}> has claimed your ticket.\n-# From ${server.name} (ticket \`${ticketId}\`)`
                     );
                 } catch(e:any) {
                     msg.reply('Failed to DM ticket creator - ticket messages may not be able to transmit.');
@@ -65,16 +82,16 @@ export class Utils extends Cog {
 
                 // Notify previous ticket claimant of claim takeover
                 try {
-                    if(ticket.claimed_by && ticket.claimed_by !== userId) {
+                    if(claimedBy && claimedBy !== userId) {
                         this.bot.dmSend(
-                            ticket.claimed_by,
-                            `Your claim on ticket \`${ticket.ticket_id}\` has been taken over by <@${userId}>.`
+                            claimedBy,
+                            `Your claim on ticket \`${ticketId}\` has been taken over by <@${userId}>.`
                         );
                     }
 
                     msg.reply('You have claimed this ticket.');
                 } catch(e) {
-                    msg.reply(`You have taken over <@${ticket.claimed_by}>'s ticket.\n-# Sent here due to DM notification failure`);
+                    msg.reply(`You have taken over <@${claimedBy}>'s ticket.\n-# Sent here due to DM notification failure`);
                     console.error(e);
                 }
             }
@@ -82,33 +99,14 @@ export class Utils extends Cog {
 
         close: {
             description: 'Close the ticket, with an optional reason. Support/admin roles & ticket user only.',
-            run: async (msg: any, dm: boolean) => {
+            run: async (msg: any) => {
                 // Close a ticket - staff, admin roles, or ticket author only
-                
-                console.log(dm);
                 let {
-                    server_id: serverId,
-                    user_id: userId,
+                    author_id: userId,
                     channel_id: channelId
                 } = msg;
 
-                const user = await this.bot.member(serverId, userId);
-                const server = await this.bot.server(serverId);
-
-                const {
-                    error: serverNotFound,
-                    isAdmin, isSupport
-                } = await isAdminOrSupport(user, serverId);
-
-                if(serverNotFound) {
-                    msg.reply(serverNotFound);
-                    return;
-                }
-
-                if(!isAdmin && !isSupport) {
-                    msg.reply('You are not allowed to close this ticket.');
-                    return;
-                }
+                let user, botServer = null;
 
                 const ticket: any = db.prepare(`
                     SELECT *
@@ -116,6 +114,87 @@ export class Utils extends Cog {
                     WHERE channel_id = ?
                     AND status = 'open'
                 `).get(channelId);
+                
+                if(!ticket) {
+                    if(msg.dm) this.bot.dmSend(userId, 'The ticket you are trying to close does not exist or is already closed.');
+                    else msg.reply('The ticket you are trying to close does not exist or is already closed.');
+                    return;
+                }
+
+                let serverId = ticket.server_id;
+
+                if(!msg.dm)
+                    user = await this.bot.member(serverId, userId);
+
+                const {
+                    error: serverNotFound,
+                    isAdmin, isSupport, server
+                } = await isAdminOrSupport(user, serverId, msg.is_dm);
+
+                if(serverNotFound) {
+                    if(msg.dm) this.bot.dmSend(userId, serverNotFound);
+                    else msg.reply(serverNotFound);
+                    return;
+                }
+
+                botServer = await this.bot.server(ticket.server_id);
+
+                // Check if the user is the ticket author or has a support/admin role before closing
+                if(msg.dm && userId !== ticket.opened_by) {
+                    this.bot.dmSend(
+                        userId,
+                        'You must be the ticket author in order to close this ticket.'
+                    );
+                    return;
+                } else {
+                    if(!isAdmin && !isSupport) {
+                        msg.reply('You are not allowed to close this ticket.');
+                        return;
+                    }
+                }
+
+                const {
+                    ticket_id: ticketId,
+                    opened_by: openedBy
+                } = ticket;
+
+                try {
+                    db.transaction(() => {
+                        db.prepare(`
+                            UPDATE users
+                            SET active_ticket = NULL
+                            WHERE user_id = ?
+                            AND active_ticket = ?
+                        `).run(openedBy, ticketId);
+
+                        db.prepare(`
+                            UPDATE tickets
+                            SET status = 'closed'
+                            WHERE ticket_id = ?
+                        `).run(ticketId);
+                    })();
+
+                    this.bot.editChannel(channelId, {
+                        categoryId: server.closed_ticket_category
+                    });
+
+                    msg.reply(`Ticket \`${ticketId}\` has been closed.\nReason: ${msg.content.slice('/close '.length).trim() || 'None'}\n-# From **${botServer.name}**`);
+
+                    this.bot.dmSend(
+                        userId,
+                        `Ticket ${ticketId} has been closed.\nReason: ${msg.content.slice('/close '.length).trim() || 'None'}`
+                    );
+                } catch(e: any) {
+                    console.error(e);
+                    if(msg.dm)
+                        this.bot.dmSend(
+                            userId,
+                            `I couldn't close your ticket! Please contact the developer through our [support server](https://yapin.gg/invite/qaFqK6zVXp).`
+                        );
+                    else
+                        msg.reply(`I couldn't close the ticket! Please contact the developer through our [support server](https://yapin.gg/invite/qaFqK6zVXp).`)
+                    return;
+                }
             }
         },
         
