@@ -1214,7 +1214,7 @@ export class Bot {
                 }
               });
 
-            void this.emit('command', msg, dm).catch((e) => {
+            void this.emit('command', msg).catch((e) => {
               console.error('[yapper] Command event listener failed:', e);
             });
           }
@@ -1245,7 +1245,7 @@ export class Bot {
               }
             });
 
-          void this.emit('command', msg, dm).catch((e) => {
+          void this.emit('command', msg).catch((e) => {
             console.error('[yapper] Command event listener failed:', e);
           });
         }
@@ -1262,7 +1262,6 @@ export class Bot {
       await this.emit('interaction', i);
     } else if (ev.type === 'dm_message') {
       // A DM to this bot. Commands aren't run here (they are for servers); answer in onDm / on('dm_message').
-      dm = true;
       if (this.ignoreBots && data.author_bot) return;
       const msg = this.wrap(data);
       msg.dm = true;
@@ -1297,7 +1296,7 @@ export class Bot {
               .then(() => c.fn(msg))
               .catch(e => this.fail(e));
 
-            void this.emit('command', msg, dm);
+            void this.emit('command', msg);
           }
         } else if (c && c.serverOnly) {
           msg.reply(`\`/${match[1].toLowerCase()}\` is a server-only command.`);
