@@ -1214,7 +1214,7 @@ export class Bot {
                 }
               });
 
-            void this.emit('command', (msg, dm)).catch((e) => {
+            void this.emit('command', msg, dm).catch((e) => {
               console.error('[yapper] Command event listener failed:', e);
             });
           }
@@ -1245,7 +1245,7 @@ export class Bot {
               }
             });
 
-          void this.emit('command', (msg, dm)).catch((e) => {
+          void this.emit('command', msg, dm).catch((e) => {
             console.error('[yapper] Command event listener failed:', e);
           });
         }
@@ -1297,7 +1297,7 @@ export class Bot {
               .then(() => c.fn(msg))
               .catch(e => this.fail(e));
 
-            void this.emit('command', (msg, dm));
+            void this.emit('command', msg, dm);
           }
         } else if (c && c.serverOnly) {
           msg.reply(`\`/${match[1].toLowerCase()}\` is a server-only command.`);
