@@ -1,6 +1,6 @@
 import { db } from "../bot";
 
-export const isAdminOrSupport = async(member: any, serverId: string): Promise<{
+export const isAdminOrSupport = async(member: any, serverId: string, dm?: boolean): Promise<{
     isSupport?: boolean,
     isAdmin?: boolean,
     error?: string,
@@ -15,6 +15,12 @@ export const isAdminOrSupport = async(member: any, serverId: string): Promise<{
     if (!serverDb) {
         return {
             error: 'Server not found in our database. It may be improperly configured, try running `/setup` for guided setup.'
+        }
+    }
+
+    if(dm) {
+        return {
+            server: serverDb
         }
     }
 
