@@ -82,8 +82,40 @@ export class Utils extends Cog {
 
         close: {
             description: 'Close the ticket, with an optional reason. Support/admin roles & ticket user only.',
-            run: async (msg: any) => {
+            run: async (msg: any, dm: boolean) => {
                 // Close a ticket - staff, admin roles, or ticket author only
+                
+                console.log(dm);
+                let {
+                    server_id: serverId,
+                    user_id: userId,
+                    channel_id: channelId
+                } = msg;
+
+                const user = await this.bot.member(serverId, userId);
+                const server = await this.bot.server(serverId);
+
+                const {
+                    error: serverNotFound,
+                    isAdmin, isSupport
+                } = await isAdminOrSupport(user, serverId);
+
+                if(serverNotFound) {
+                    msg.reply(serverNotFound);
+                    return;
+                }
+
+                if(!isAdmin && !isSupport) {
+                    msg.reply('You are not allowed to close this ticket.');
+                    return;
+                }
+
+                const ticket: any = db.prepare(`
+                    SELECT *
+                    FROM tickets
+                    WHERE channel_id = ?
+                    AND status = 'open'
+                `).get(channelId);
             }
         },
         
