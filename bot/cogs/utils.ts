@@ -364,6 +364,14 @@ export class Utils extends Cog {
                             errors.push('Panel name and description are required.')
                         }
 
+                        if(name.length > 256) {
+                            errors.push('Panel name must be less than 256 characters.');
+                        }
+
+                        if(description.length > 4096) {
+                            errors.push('Panel description must be less than 4,096 characters.')
+                        }
+
                         if(color && !/^#[0-9A-Fa-f]{6}$/.test(color)) {
                             errors.push('Panel color is invalid, please use HEX format (e.g. #784FC9)');
                         }

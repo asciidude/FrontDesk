@@ -1,4 +1,4 @@
-import { Cog } from '../../dependencies/yapper.js';
+import { Cog, Embed } from '../../dependencies/yapper.js';
 import { db } from '../index.js';
 
 export class Utils extends Cog {
@@ -8,18 +8,21 @@ export class Utils extends Cog {
             serverOnly: true,
             run: async (msg: any) => {
                 // Claim a ticket - staff or admin roles only
-                let serverId = msg.server_id;
-                let userId = msg.author_id;
+                let {
+                    server_id: serverId,
+                    user_id: userId,
+                    channel_id: channelId
+                } = msg;
 
                 const user = await this.bot.member(serverId, userId);
 
-                const server = db.prepare(`
+                const ticket = db.prepare(`
                     SELECT *
-                    FROM servers
-                    WHERE server_id = ?
-                `).get(serverId);
+                    FROM tickets
+                    WHERE channel_id = ?
+                `).get(msg.channel_id);
 
-                console.log(server, user);
+                
             }
         },
 
