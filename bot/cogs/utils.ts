@@ -369,7 +369,8 @@ export class Utils extends Cog {
                         }
 
                         if(description.length > 4096) {
-                            errors.push('Panel description must be less than 4,096 characters.')
+                            // is this even possible in a normal chat?? xD
+                            errors.push('Panel description must be less than 4,096 characters.');
                         }
 
                         if(color && !/^#[0-9A-Fa-f]{6}$/.test(color)) {
