@@ -226,12 +226,6 @@ export class Utils extends Cog {
                     return;
                 }
 
-                const user = db.prepare(`
-                    SELECT *
-                    FROM users
-                    WHERE user_id = ?
-                `).get(userId);
-
                 const res = db.prepare(`
                     UPDATE users
                     SET active_ticket = ?
@@ -265,7 +259,7 @@ export class Utils extends Cog {
 
                 // Split messages & send sequentially
                 const splitMessages = splitString(messageContent, 2000);
-                
+
                 for (const message of splitMessages) {
                     this.bot.dmSend(userId, message);
                 }
