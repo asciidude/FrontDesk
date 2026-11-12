@@ -35,23 +35,12 @@ export class Utils extends Cog {
                     return;
                 }
 
-                let ticket: any;
-
-                if (msg.dm) {
-                    ticket = db.prepare(`
-                        SELECT *
-                        FROM tickets
-                        WHERE opened_by = ?
-                        AND status = 'open'
-                    `).get(userId);
-                } else {
-                    ticket = db.prepare(`
-                        SELECT *
-                        FROM tickets
-                        WHERE channel_id = ?
-                        AND status = 'open'
-                    `).get(channelId);
-                }
+                const ticket: any = db.prepare(`
+                    SELECT *
+                    FROM tickets
+                    WHERE channel_id = ?
+                    AND status = 'open'
+                `).get(channelId);
 
                 const {
                     opened_by: openedBy,
@@ -108,13 +97,23 @@ export class Utils extends Cog {
                 } = msg;
 
                 let user, botServer = null;
+                let ticket: any;
 
-                const ticket: any = db.prepare(`
-                    SELECT *
-                    FROM tickets
-                    WHERE channel_id = ?
-                    AND status = 'open'
-                `).get(channelId);
+                if (msg.dm) {
+                    ticket = db.prepare(`
+                        SELECT *
+                        FROM tickets
+                        WHERE opened_by = ?
+                        AND status = 'open'
+                    `).get(userId);
+                } else {
+                    ticket = db.prepare(`
+                        SELECT *
+                        FROM tickets
+                        WHERE channel_id = ?
+                        AND status = 'open'
+                    `).get(channelId);
+                }
 
                 if (!ticket) {
                     if (msg.dm) this.bot.dmSend(userId, 'The ticket you are trying to close does not exist or is already closed.');
@@ -147,15 +146,14 @@ export class Utils extends Cog {
                         'You must be the ticket author in order to close this ticket.'
                     );
                     return;
-                } else {
-                    if (!isAdmin && !isSupport) {
-                        msg.reply('You are not allowed to close this ticket.');
-                        return;
-                    }
+                } else if (!msg.dm && !isAdmin && !isSupport) {
+                    msg.reply('You are not allowed to close this ticket.');
+                    return;
                 }
 
                 const {
                     ticket_id: ticketId,
+                    channel_id: tChannelId,
                     opened_by: openedBy
                 } = ticket;
 
@@ -175,7 +173,7 @@ export class Utils extends Cog {
                         `).run(ticketId);
                     })();
 
-                    this.bot.editChannel(channelId, {
+                    this.bot.editChannel(tChannelId, {
                         categoryId: server.closed_ticket_category
                     });
 
