@@ -177,11 +177,12 @@ export class Utils extends Cog {
                         categoryId: server.closed_ticket_category
                     });
 
-                    msg.reply(`Ticket \`${ticketId}\` has been closed.\nReason: ${msg.content.slice('/close '.length).trim() || 'None'}\n-# From **${botServer.name}**`);
+                    let closeMessage = `Ticket ${ticketId} has been closed.\nReason: ${msg.content.slice('/close '.length).trim() || 'None'}`;
 
+                    this.bot.send(tChannelId, closeMessage);
                     this.bot.dmSend(
                         userId,
-                        `Ticket ${ticketId} has been closed.\nReason: ${msg.content.slice('/close '.length).trim() || 'None'}`
+                        `${closeMessage}\n-# From **${botServer.name}**`
                     );
                 } catch (e: any) {
                     console.error(e);
