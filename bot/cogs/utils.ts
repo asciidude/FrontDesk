@@ -566,11 +566,6 @@ export class Utils extends Cog {
                         return;
                     }
                 } catch (e: any) {
-                    if (e instanceof SetupCancelled)
-                        return;
-
-                    await editEmbed(setupEmbed, false);
-
                     db.transaction(() => {
                         db.prepare(`
                             DELETE FROM tickets
@@ -582,7 +577,17 @@ export class Utils extends Cog {
                             WHERE server_id = ?
                         `).run(serverId);
                     })();
+                    
+                    if(e instanceof SetupCancelled)
+                        return;
 
+                    await editEmbed(
+                        setupEmbed
+                            .title('Oops!')
+                            .description('Something happened! Please try again or contact us via our [support server](https://yapin.gg/invite/qaFqK6zVXp).')
+                            .color('red'),
+                        false
+                    );
                     throw e;
                 } finally {
                     await editEmbed(setupEmbed, false);
