@@ -61,6 +61,21 @@ db.exec(`
             REFERENCES servers(server_id)
     );
 
+    CREATE TABLE IF NOT EXISTS messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id TEXT NOT NULL UNIQUE,
+        channel_id TEXT NOT NULL,
+        ticket_id TEXT NOT NULL,
+        is_dm INTEGER NOT NULL DEFAULT 0
+            CHECK (is_dm IN (1, 0)),
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        last_updated TEXT DEFAULT CURRENT_TIMESTAMP,
+
+        FOREIGN KEY (ticket_id)
+            REFERENCES tickets(ticket_id)
+            ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS servers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         server_id TEXT NOT NULL UNIQUE,
@@ -148,6 +163,10 @@ bot.on('ready', async () => {
     }, 5000);
 });
 
+// TODO (whenever it's added)
+// * update messages on message_update on either server or dm
+// * delete messages on message_delete ^ + delete message database
+
 bot.on('dm_message', (msg: any) => {
     // Transmit message (dms -> server) or "No ticket selected"
     if (msg.content.startsWith('/')) return;
@@ -199,6 +218,16 @@ bot.on('dm_message', (msg: any) => {
         return;
     }
 
+    db.prepare(`
+        INSERT INTO messages (
+            message_id,
+            channel_id,
+            ticket_id,
+            is_dm
+        )
+        VALUES (?, ?, ?, ?)
+    `).run(msg.id, msg.channel_id, ticket.ticket_id, 1);
+
     bot.send(
         ticket.channel_id,
         `<@${userId}>: ${msg.content}`
@@ -244,6 +273,15 @@ bot.on('message', async (msg: any) => {
         }
 
         if (ticket.status === 'closed') return;
+
+        db.prepare(`
+            INSERT INTO messages (
+                message_id,
+                channel_id,
+                ticket_id
+            )
+            VALUES (?, ?, ?)
+        `).run(msg.id, msg.channel_id, ticket.ticket_id);
 
         bot.dmSend(
             userId,
