@@ -177,7 +177,7 @@ export class Utils extends Cog {
                         categoryId: server.closed_ticket_category
                     });
 
-                    let closeMessage = `Ticket ${ticketId} has been closed.\nReason: ${msg.content.slice('/close '.length).trim() || 'None'}`;
+                    let closeMessage = `Ticket \`${ticketId}\` has been closed.\nReason: ${msg.content.slice('/close '.length).trim() || 'None'}`;
 
                     this.bot.send(tChannelId, closeMessage);
                     this.bot.dmSend(
@@ -239,7 +239,7 @@ export class Utils extends Cog {
                 this.bot.dmSend(userId, `Ticket \`${ticketId}\` has been selected.\n-# Showing the last 15 messages - older messages cannot be viewed.`);
 
                 // Read up to 15 messages
-                const messages = await this.bot.messages(selectedTicket.channel_id).slice(0, 15);
+                const messages = (await this.bot.messages(selectedTicket.channel_id)).slice(0, 15);
 
                 // Map messages and make sure the author is shown 
                 const messageContent = messages
