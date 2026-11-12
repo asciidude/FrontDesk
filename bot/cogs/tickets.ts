@@ -203,6 +203,43 @@ export class Utils extends Cog {
             dmOnly: true,
             run: async (msg: any) => {
                 // Get last 5 messages & send them (if >2,000 chars, send in parts)
+                const userId = msg.author_id;
+                
+                if(msg.argv.length === 0) {
+                    this.bot.dmSend(userId, 'Invalid syntax. Please use `/switch <ticket ID>` instead.');
+                    return;
+                }
+
+                const ticketId = msg.argv[0];
+
+                const selectedTicket = db.prepare(`
+                    SELECT *
+                    FROM tickets
+                    WHERE ticket_id = ?
+                    AND user_id = ?
+                    AND status = 'open'
+                `).get(ticketId, userId);
+
+                if(!selectedTicket) {
+                    this.bot.dmSend(userId, `Ticket \`${ticketId}\` not found. Please use \`/tickets\` to view your tickets.`);
+                    return;
+                }
+
+                const res = db.prepare(`
+                    UPDATE users
+                    SET active_ticket = ?
+                    WHERE user_id = ?
+                `).run(ticketId, userId);
+
+                if(res.changes === 0) {
+                    this.bot.dmSend(userId, 'Unable to switch tickets - user not found.');
+                    return;
+                }
+
+                // TODO: Read all messages from ticket channel & split into parts
+                // Read up to 15 messages; not accounting for unread messages.
+
+                this.bot.dmSend(userId, `Ticket \`${ticketId}\` has been selected.\n-# Showing the last 15 messages - older messages cannot be viewed.`);
                 
             }
         },
