@@ -537,8 +537,6 @@ export class Utils extends Cog {
                             false
                         )
                     } catch (e: any) {
-                        console.error(e);
-
                         for(const message of setupResources.messages) {
                             try {
                                 await this.bot.delete(message.channelId, message.messageId);

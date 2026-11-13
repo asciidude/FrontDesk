@@ -1315,184 +1315,144 @@ export class Bot {
       .catch(e => Promise.resolve(this.fail(e)).then(() => false));
   }
 
-
-  handle(ev) {
+  async handle(ev) {
+    let dm = false;
     const data = ev.data || {};
-
-    const runCommand = (c, msg) => {
-      // Context restrictions
-      const dm = msg.dm === true || msg.is_dm === true;
-
-      if (c.dmOnly && c.serverOnly) return Promise.resolve(false);
-      if (c.dmOnly && !dm) return Promise.resolve(false);
-      if (c.serverOnly && dm) return Promise.resolve(false);
-
-      // Run cog check before executing
-      let check;
-
-      try {
-        check = c.check ? c.check(msg) : true;
-      } catch (e) {
-        return Promise.resolve(this.fail(e)).then(() => false);
-      }
-
-      return Promise.resolve(check)
-        .then(ok => {
-          if (ok === false) return false;
-
-          let result;
-
-          try {
-            result = c.fn(msg);
-          } catch (e) {
-            return Promise.resolve(this.fail(e)).then(() => false);
-          }
-
-          return Promise.resolve(result)
-            .catch(e => this.fail(e))
-            .then(() => this.emit('command', msg))
-            .then(() => true);
-        })
-        .catch(e => Promise.resolve(this.fail(e)).then(() => false));
-    };
-
     if (ev.type === 'message') {
-      // Messages from bots and webhooks
-      if (this.ignoreBots && data.author_bot) return Promise.resolve();
-
+      // Messages from bots and webhooks (author_bot): skipped unless the bot asked for them (ignoreBots: false).
+      if (this.ignoreBots && data.author_bot) return;
       const msg = this.wrap(data);
       let name = data.command;
       let args = data.args;
-
-      // Commands explicitly picked for another bot aren't ours
-      const forOther = Array.isArray(data.command_for) &&
-        !data.command_for.includes(this.me?.id);
-
+      // "/fish @OtherBot": a command picked for another bot (command_for) isn't ours to answer, even if we have /fish.
+      const forOther = Array.isArray(data.command_for) && !data.command_for.includes(this.me?.id);
       if (!name && !forOther) {
-        // Match the longest available prefix first
+        // Commands typed with another prefix, or ones we didn't register. A prefix can be longer than one
+        // character ('yap!'); the longest one that fits goes first so '!!' wins over '!'.
         const content = data.content || '';
-
         for (const p of [...this.prefixes].sort((a, b) => b.length - a.length)) {
           if (!p || !content.startsWith(p)) continue;
-
-          const m = /^([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i.exec(
-            content.slice(p.length)
-          );
-
-          if (m && this.commands.has(m[1].toLowerCase())) {
-            name = m[1].toLowerCase();
-            args = (m[2] || '').trim();
-            break;
-          }
+          const m = /^([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i.exec(content.slice(p.length));
+          if (m && this.commands.has(m[1].toLowerCase())) { name = m[1].toLowerCase(); args = (m[2] || '').trim(); break; }
         }
       }
-
-      let commandPromise = Promise.resolve();
-
       if (name && this.commands.has(name)) {
         const c = this.commands.get(name);
-
         msg.command = name;
         msg.args = args || '';
         msg.argv = msg.args ? msg.args.split(/\s+/) : [];
+        // A cog's check(msg) runs first; false (or an error) skips the command.
+        let ok = true;
+        if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
+        if (ok) {
+          // fix for command blocking queue & dm only commands
+          if (c.dmOnly) {
+            await msg.reply(`\`/${msg.command}\` can only be used in DMs.`);
+          } else {
+            void Promise.resolve()
+              .then(() => c.fn(msg))
+              .catch(async (e) => {
+                try {
+                  await this.fail(e);
+                } catch (reportError) {
+                  console.error('[yapper] Failed to report command error:', reportError);
+                }
+              });
 
-        commandPromise = runCommand(c, msg);
-      }
-
-      return commandPromise
-        .then(() => this.emit('message', msg))
-        .catch(e => this.fail(e));
-
-    } else if (ev.type === 'command') {
-      // Slash command
-      const msg = this.wrapCommand(data);
-      const c = this.commands.get(msg.command);
-
-      if (!c) {
-        return this.respond(data, 'ephemeral', {
-          content: `/${msg.command} isn't a command of this bot anymore`
-        }).catch(() => { });
-      }
-
-      return runCommand(c, msg);
-
-    } else if (ev.type === 'interaction') {
-      const i = this.wrapInteraction(data);
-      const kind = data.type === 'select' || data.type === 'modal_submit'
-        ? data.type
-        : 'button';
-
-      const tasks = [];
-
-      for (const b of this.buttons) {
-        if ((b.kind || 'button') !== kind) continue;
-
-        // Reset regex lastIndex before testing
-        const hit = b.match instanceof RegExp
-          ? ((b.match.lastIndex = 0), b.match.test(data.custom_id))
-          : b.match === data.custom_id;
-
-        if (hit) {
-          let result;
-
-          try {
-            result = b.fn(i);
-          } catch (e) {
-            result = Promise.reject(e);
+            void this.emit('command', msg).catch((e) => {
+              console.error('[yapper] Command event listener failed:', e);
+            });
           }
-
-          tasks.push(
-            Promise.resolve(result).catch(e => this.fail(e))
-          );
         }
       }
+      void this.emit('message', msg).catch(e => {
+        console.error('[yapper] Message event listener failed:', e);
+      });
+    } else if (ev.type === 'command') {
+      // A slash command picked from the / menu (flag bot_slash_interactions): nothing was posted in chat. msg works
+      // like a command message; msg.reply answers it (shown with "<user> used /cmd"), msg.ephemeral only to them.
+      const msg = this.wrapCommand(data);
+      const c = this.commands.get(msg.command);
+      if (!c) { await this.respond(data, 'ephemeral', { content: `/${msg.command} isn't a command of this bot anymore` }).catch(() => { }); return; }
+      let ok = true;
+      if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
+      if (ok) {
+        if (c.dmOnly) {
+          await msg.reply(`\`/${msg.command}\` can only be used in DMs.`);
+        } else {
+          void Promise.resolve()
+            .then(() => c.fn(msg))
+            .catch(async (e) => {
+              try {
+                await this.fail(e);
+              } catch (reportError) {
+                console.error('[yapper] Failed to report command error:', reportError);
+              }
+            });
 
-      return Promise.all(tasks)
-        .then(() => this.emit('interaction', i));
-
+          void this.emit('command', msg).catch((e) => {
+            console.error('[yapper] Command event listener failed:', e);
+          });
+        }
+      }
+    } else if (ev.type === 'interaction') {
+      const i = this.wrapInteraction(data);
+      const kind = data.type === 'select' || data.type === 'modal_submit' ? data.type : 'button';
+      for (const b of this.buttons) {
+        if ((b.kind || 'button') !== kind) continue;
+        // lastIndex reset: a /g or /y pattern keeps its place between tests, which made every other click miss.
+        const hit = b.match instanceof RegExp ? ((b.match.lastIndex = 0), b.match.test(data.custom_id)) : b.match === data.custom_id;
+        if (hit) { try { await b.fn(i); } catch (e) { await this.fail(e); } }
+      }
+      await this.emit('interaction', i);
     } else if (ev.type === 'dm_message') {
-      // Direct messages
-      if (this.ignoreBots && data.author_bot) return Promise.resolve();
-
+      // A DM to this bot. Commands aren't run here (they are for servers); answer in onDm / on('dm_message').
+      if (this.ignoreBots && data.author_bot) return;
       const msg = this.wrap(data);
-
       msg.dm = true;
       msg.is_dm = true;
       msg.dm_channel_id ||= data.channel_id;
 
-      if (msg.content.startsWith('/')) {
-        const commandMsg = this.wrapCommand(data);
+      const match = /^\/([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i
+        .exec((msg.content || '').trim());
 
-        commandMsg.dm = true;
-        commandMsg.is_dm = true;
-        commandMsg.dm_channel_id ||= data.channel_id;
+      if (match) {
+        const name = match[1].toLowerCase();
+        const c = this.commands.get(name);
 
-        const c = this.commands.get(commandMsg.command);
+        if (c && !c.serverOnly) {
+          msg.command = name;
+          msg.args = (match[2] || '').trim();
+          msg.argv = msg.args ? msg.args.split(/\s+/) : [];
 
-        if (!c) {
-          return this.respond(data, 'ephemeral', {
-            content: `/${commandMsg.command} isn't a command of this bot anymore`
-          }).catch(() => { });
+          let ok = true;
+
+          if (c.check) {
+            try {
+              ok = (await c.check(msg)) !== false;
+            } catch (e) {
+              ok = false;
+              await this.fail(e);
+            }
+          }
+
+          if (ok) {
+            void Promise.resolve()
+              .then(() => c.fn(msg))
+              .catch(e => this.fail(e));
+
+            void this.emit('command', msg);
+          }
+        } else if (c && c.serverOnly) {
+          msg.reply(`\`/${match[1].toLowerCase()}\` is a server-only command.`);
         }
-
-        return runCommand(c, commandMsg);
       }
 
-      return this.emit('dm_message', msg);
-
+      await this.emit('dm_message', msg);
     } else {
-      // Channel / thread events
-      const own = (data.object === 'channel' || data.object === 'thread') &&
-        typeof data.type === 'string';
-
-      return this.emit(ev.type, {
-        ...data,
-        type: own ? data.type : ev.type,
-        event: ev.type
-      });
+      await this.emit(ev.type, { ...data, type: ev.type });
     }
   }
-
 
   wrapInteraction(data) {
     const bot = this;

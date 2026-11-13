@@ -272,6 +272,27 @@ export class Utils extends Cog {
                 // Get all active tickets a user has and sort them by server.
                 // If embed characters exceed 6,000, add "next" and "back" buttons and split into parts.
                 // (new server = new field)
+
+                const userId = msg.author_id;
+                const tickets: any = db.prepare(`
+                    SELECT *
+                    FROM tickets
+                    WHERE opened_by = ?
+                    AND status = 'open'
+                `).all(userId);
+
+                if(tickets.length === 0) {
+                    this.bot.dmSend(
+                        userId,
+                        'You have no active tickets.'
+                    );
+
+                    return;
+                }
+
+                let ticketEmbed = new Embed({
+                    
+                });
             }
         }
     };
