@@ -1,3 +1,4 @@
+// @ts-self-types="./yapper.d.ts"
 /**
  * Yapin’ bot SDK, one file, no dependencies. Node 18+, Bun and Deno.
  *
@@ -20,10 +21,29 @@
  * Docs: https://www.yapin.gg/developers
  */
 /** SDK version, stamped from public/sdk/version.json by scripts/sdk-build.mjs (same as the npm package "yapin"). */
-export const VERSION = '1.6.0';
+export const VERSION = '1.7.0';
 /** Embeds, buttons and rows can be builders or plain objects. */
 /** Message flag for Components V2 layouts (IS_COMPONENTS_V2, 1 << 15). */
 export const IS_COMPONENTS_V2 = 1 << 15;
+
+// ---- what is this? Every object from the API and gateway has "object": 'user', 'channel', 'role' … ----
+const isKind = (x, kind) => !!x && typeof x === 'object' && x.object === kind;
+/** A user (or bot) profile. */
+export function isUser(x) { return isKind(x, 'user'); }
+/** A server member (a profile with nickname, roles, joined_at). */
+export function isMember(x) { return isKind(x, 'member'); }
+/** A server. */
+export function isServer(x) { return isKind(x, 'server'); }
+/** A text or voice channel. */
+export function isChannel(x) { return isKind(x, 'channel'); }
+/** A thread or forum post. */
+export function isThread(x) { return isKind(x, 'thread'); }
+/** A category. */
+export function isCategory(x) { return isKind(x, 'category'); }
+/** A role. */
+export function isRole(x) { return isKind(x, 'role'); }
+/** A message. */
+export function isMessage(x) { return isKind(x, 'message'); }
 const plain = (x) => (x && typeof x.toJSON === 'function' ? x.toJSON() : x);
 const list = (v) => (v === undefined ? undefined : v === null ? null : [].concat(v).map(plain));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -144,8 +164,12 @@ async function locate(target) {
     const main = typeof process !== 'undefined' && process.argv?.[1] ? path.dirname(path.resolve(process.argv[1])) : null;
     tries = [...new Set([main && path.resolve(main, raw), path.resolve(process.cwd(), raw)].filter(Boolean))];
   }
-  // 'cogs/fun' works too: try .js, .mjs, .ts, and .mts.
-  const found = tries.flatMap((p) => (/\.(?:m?js|m?ts)$/i.test(p) ? [p] : [p, `${p}.js`, `${p}.mjs`, `${p}.ts`, `${p}.mts`])).find((p) => fs.existsSync(p));
+  // 'cogs/fun' works too: try .js and .mjs.
+  const found = tries.flatMap((p) =>
+    /\.(?:m?js|mts?|cts?)$/i.test(p)
+      ? [p]
+      : [p, `${p}.js`, `${p}.mjs`, `${p}.ts`, `${p}.mts`]
+  ).find((p) => fs.existsSync(p));
   if (!found) throw new Error(`Can't find ${raw} (looked at ${tries.join(' and ')})`);
   const rel = path.relative(process.cwd(), found);
   const label = (rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : found).split(path.sep).join('/');
@@ -155,7 +179,7 @@ async function locate(target) {
 export class Bot {
   /**
    * @param {string} token from Settings → Developer
-   * @param {{ base?: string, gateway?: string | boolean, prefixes?: string[], log?: boolean, ignoreBots?: boolean }} [opts]
+   * @param {{ base?: string, gateway?: string | false, prefixes?: string[], log?: boolean, ignoreBots?: boolean }} [opts]
    *   `ignoreBots` (default true): skip messages from other bots and webhooks (`msg.author_bot`), so two bots can't
    *   reply to each other forever. Pass false to get them too.
    *   `gateway`: where events come from over a WebSocket (default wss://rt.yapper.website/bot). Used when the runtime
@@ -201,7 +225,10 @@ export class Bot {
 
   /**
    * Listen for an event: "message", "command", "dm_message", "member_join", "member_leave", "reaction_add", "reaction_remove",
-   * "voice_join", "voice_leave", "invite_create", "invite_delete", "interaction", "test", "ready", "error".
+   * "voice_join", "voice_leave", "invite_create", "invite_delete", "interaction", "channel_create", "channel_update",
+   * "channel_delete", "thread_create", "thread_update", "thread_delete", "category_create", "category_update",
+   * "category_delete", "test", "ready", "error".
+   * Channel, thread and category events are in testing (flag bot_api_round2): their data is the channel object.
    * member_join also has invite_code and inviter_id when known (bots with Manage Server).
    * dm_message is someone DMing the bot: a message with msg.reply / msg.say that answer in the DM, and msg.dm = true.
    */
@@ -225,24 +252,28 @@ export class Bot {
 
   #addCommand(name, description, fn, owner, check, options = {}) {
     if (typeof description === 'function') { fn = description; description = ''; }
+
     const n = String(name).toLowerCase().replace(/^[/!]/, '');
     if (!/^[a-z0-9_-]{1,32}$/.test(n)) throw new Error(`Bad command name "${name}": letters, numbers, - and _ only`);
     if (typeof fn !== 'function') throw new Error(`Command /${n} needs a function to run`);
+
     const old = this.commands.get(n);
-    // Same name twice in the main file just replaces it (as it always did). Across cogs that's a mistake: say where.
     if (old && old.owner !== owner && (old.owner || owner)) {
       const where = (o) => (o ? o.label : 'your main file');
       throw new Error(`Command /${n} is in both ${where(old.owner)} and ${where(owner)}. Rename one of them.`);
     }
+
     if (!old && this.commands.size >= COMMAND_LIMIT) throw new Error(`Up to ${COMMAND_LIMIT} commands per bot, /${n} is one too many`);
+
     this.commands.set(n, {
       description: String(description || '').slice(0, 100),
       fn,
       owner,
       check,
-      serverOnly: options.serverOnly === true,
-      dmOnly: options.dmOnly === true
+      dmOnly: options.dmOnly ?? false,
+      serverOnly: options.serverOnly ?? false
     });
+
     if (owner) owner.cmds.add(n);
     this.#syncSoon();
     return this;
@@ -278,16 +309,33 @@ export class Bot {
    */
   load(file) { return this.#track(this.#loadFile(file, 0)); }
 
-  /** Load every .js / .mjs / .ts / .mts file in a folder, A to Z. Files starting with _ are skipped (handy for helpers). Returns the names. */
+  /**
+ * Load every .js / .mjs / .ts / .mts file in a folder, A to Z.
+ * Files starting with _ or . are skipped (handy for helpers).
+ * Returns the names.
+ */
   loadCogs(dir = './cogs') {
     return this.#track((async () => {
       const { abs } = await locate(dir);
-      const [fs, path] = await Promise.all([import('node:fs/promises'), import('node:path')]);
+      const [fs, path] = await Promise.all([
+        import('node:fs/promises'),
+        import('node:path')
+      ]);
+
       const files = (await fs.readdir(abs, { withFileTypes: true }))
-        .filter((d) => d.isFile() && /\.(?:m?js|m?ts)$/i.test(d.name) && !/^[_\.]/.test(d.name))
-        .map((d) => d.name).sort();
+        .filter((d) =>
+          d.isFile() &&
+          /\.(?:m?js|mts?)$/i.test(d.name) &&
+          !/^[_.]/.test(d.name)
+        )
+        .map((d) => d.name)
+        .sort();
+
       const names = [];
-      for (const f of files) names.push(await this.#loadFile(path.join(abs, f), 0));
+      for (const f of files) {
+        names.push(await this.#loadFile(path.join(abs, f), 0));
+      }
+
       return names;
     })());
   }
@@ -397,7 +445,10 @@ export class Bot {
         tagged(owner, run, cog, `/${n}`),
         owner,
         check,
-        typeof c === 'function' ? {} : c
+        {
+          dmOnly: typeof c === 'function' ? false : c.dmOnly,
+          serverOnly: typeof c === 'function' ? false : c.serverOnly
+        }
       );
     }
     for (const [prefix, fn] of Object.entries(cog.buttons || {})) {
@@ -639,6 +690,14 @@ export class Bot {
   async members(serverId, after) { return (await this.api('GET', `/servers/${serverId}/members?limit=200${after ? `&after=${after}` : ''}`)).members; }
   /** Recent messages in a channel, oldest first. Each has its `author` profile ({ id, username, display_name, … }). @see https://www.yapin.gg/developers/api/messages#get-channels-id-messages */
   async messages(channelId, limit = 50) { return withAuthors(await this.api('GET', `/channels/${channelId}/messages?limit=${limit}`)); }
+  /**
+   * What an id is: await bot.resolve(id) -> { id, object: 'channel' | 'user' | 'role' | …, server_id, channel_id } or
+   * null (unknown, or something the bot can't see). 120 a minute per bot. In testing (flag bot_api_round2).
+   * @see https://www.yapin.gg/developers/api/users#get-resolve-id
+   */
+  async resolve(id) {
+    try { return await this.api('GET', `/resolve/${encodeURIComponent(String(id))}`); } catch (e) { if (e.status === 404) return null; throw e; }
+  }
   /** Someone's public profile. @see https://www.yapin.gg/developers/api/users#get-users-id */
   async user(userId) { return (await this.api('GET', `/users/${userId}`)).user; }
   /**
@@ -654,7 +713,7 @@ export class Bot {
   /** The bot's banner, same inputs as setAvatar. @see https://www.yapin.gg/developers/api/bot#put-me-banner */
   async setBanner(image, type) { return this.#upload('/me/banner', image, type); }
   /** Online status and what the bot is "playing": setStatus('dnd', 'Moderating'). Status: online, idle, dnd. @see https://www.yapin.gg/developers/api/bot#put-me-status */
-  async setStatus(status = 'online', activity = '') {
+  async setStatus(status = 'online', activity = null) {
     const out = await this.api('PUT', '/me/status', { status, activity });
     // Connected to the gateway: tell it too, so the dot and activity change there at once.
     try { if (this._ws?.readyState === 1) this._ws.send(JSON.stringify({ op: 'presence', status, activity })); } catch { /* closed */ }
@@ -750,6 +809,23 @@ export class Bot {
   }
   /** @see https://www.yapin.gg/developers/api/roles#delete-servers-id-roles-rid */
   async deleteRole(serverId, roleId) { return this.api('DELETE', `/servers/${serverId}/roles/${roleId}`); }
+  /** One role (in testing, flag bot_api_round2). @see https://www.yapin.gg/developers/api/roles#get-servers-id-roles-rid */
+  async getRole(serverId, roleId) { return (await this.api('GET', `/servers/${serverId}/roles/${roleId}`)).role; }
+  /**
+   * Put roles in this order, top first: reorderRoles(server, [modsId, helpersId]). Roles you leave out keep their order
+   * below these; roles at or above the bot's own stay put. Returns every role, top first. In testing (bot_api_round2).
+   * @see https://www.yapin.gg/developers/api/roles#patch-servers-id-roles
+   */
+  async reorderRoles(serverId, roleIds) { return (await this.api('PATCH', `/servers/${serverId}/roles`, { ids: roleIds })).roles; }
+  /**
+   * What someone can do, worked out like the app does: getPermissions(server, user) for the server, or with a channel
+   * for that channel (overrides included). { object: 'permissions', owner, administrator, permissions: { kick_members: true, … } }.
+   * In testing (bot_api_round2).
+   */
+  async getPermissions(serverId, userId, channelId = null) {
+    const path = channelId ? `/channels/${channelId}/permissions/${userId}` : `/servers/${serverId}/members/${userId}/permissions`;
+    return (await this.api('GET', path)).permissions;
+  }
   // ---- custom emojis (Manage Emoji; 30 changes a minute per bot; in testing, flag bot_emojis) ----
   /** The server's custom emojis: { emojis: [{ id, name, animated, url, … }], limit } (limit = emoji slots). @see https://www.yapin.gg/developers/api/emojis#get-servers-id-emojis */
   async emojis(serverId) { return this.api('GET', `/servers/${serverId}/emojis`); }
@@ -804,12 +880,12 @@ export class Bot {
   /**
    * Allow or deny permissions for a role (or 'everyone') in one channel: setChannelPermissions(ch, roleId,
    * { allow: ['send_messages'], deny: ['view_channel'] }). Empty lists remove the override.
-   * @see https://www.yapin.gg/developers/api/channels#put-channels-id-permissions-role
+   * @see https://www.yapin.gg/developers/api/channels#put-channels-id-permissions-target
    */
   async setChannelPermissions(channelId, roleId, { allow = [], deny = [] } = {}) {
     return this.api('PUT', `/channels/${channelId}/permissions/${roleId}`, { allow, deny });
   }
-  /** @see https://www.yapin.gg/developers/api/channels#delete-channels-id-permissions-role */
+  /** @see https://www.yapin.gg/developers/api/channels#delete-channels-id-permissions-target */
   async clearChannelPermissions(channelId, roleId) { return this.api('DELETE', `/channels/${channelId}/permissions/${roleId}`); }
   /** The same for a whole category (its channels follow it unless they have their own). @see https://www.yapin.gg/developers/api/channels#put-servers-id-categories-cid-permissions-role */
   async setCategoryPermissions(serverId, categoryId, roleId, { allow = [], deny = [] } = {}) {
@@ -817,6 +893,29 @@ export class Bot {
   }
   /** @see https://www.yapin.gg/developers/api/channels#delete-servers-id-categories-cid-permissions-role */
   async clearCategoryPermissions(serverId, categoryId, roleId) { return this.api('DELETE', `/servers/${serverId}/categories/${categoryId}/permissions/${roleId}`); }
+  // ---- overrides, round 2 (in testing, flag bot_api_round2): target is a role id or 'everyone' ----
+  /** A channel's overrides: [{ object: 'override', type: 'role' | 'everyone', id, role_id, allow, deny, channel_id }]. @see https://www.yapin.gg/developers/api/channels#get-channels-id-overrides */
+  async getOverrides(channelId) { return (await this.api('GET', `/channels/${channelId}/overrides`)).overrides; }
+  /**
+   * setOverride(channel, roleId or 'everyone', { allow: ['send_messages'], deny: ['view_channel'] }). Empty lists remove it.
+   * Same rules as a person: only roles below the bot's top role, only permissions the bot has itself.
+   * @see https://www.yapin.gg/developers/api/channels#put-channels-id-overrides-target
+   */
+  async setOverride(channelId, target, { allow = [], deny = [] } = {}) {
+    const out = await this.api('PUT', `/channels/${channelId}/overrides/${target}`, { allow, deny });
+    return out.override ?? null;
+  }
+  /** @see https://www.yapin.gg/developers/api/channels#delete-channels-id-overrides-target */
+  async deleteOverride(channelId, target) { return this.api('DELETE', `/channels/${channelId}/overrides/${target}`); }
+  /** A category's overrides (its channels follow them unless they set their own). @see https://www.yapin.gg/developers/api/channels#get-categories-id-overrides */
+  async getCategoryOverrides(categoryId) { return (await this.api('GET', `/categories/${categoryId}/overrides`)).overrides; }
+  /** @see https://www.yapin.gg/developers/api/channels#put-categories-id-overrides-target */
+  async setCategoryOverride(categoryId, target, { allow = [], deny = [] } = {}) {
+    const out = await this.api('PUT', `/categories/${categoryId}/overrides/${target}`, { allow, deny });
+    return out.override ?? null;
+  }
+  /** @see https://www.yapin.gg/developers/api/channels#delete-categories-id-overrides-target */
+  async deleteCategoryOverride(categoryId, target) { return this.api('DELETE', `/categories/${categoryId}/overrides/${target}`); }
   /** Set someone's nickname ('' clears it). @see https://www.yapin.gg/developers/api/moderation#patch-servers-id-members-uid */
   async setNickname(serverId, userId, nickname) { return this.api('PATCH', `/servers/${serverId}/members/${userId}`, { nickname }); }
   /** @see https://www.yapin.gg/developers/api/moderation#post-servers-id-kick */
@@ -1170,144 +1269,228 @@ export class Bot {
     this._syncTimer = null;
   }
 
-  async handle(ev) {
-    let dm = false;
+  canRunInContext(c, msg) {
+    const dmOnly = c.dmOnly === true;
+    const serverOnly = c.serverOnly === true;
+
+    if (dmOnly && serverOnly) return false;
+    if (dmOnly && !msg.dm && !msg.is_dm) return false;
+    if (serverOnly && (msg.dm || msg.is_dm)) return false;
+
+    return true;
+  }
+
+  runCommand(c, msg) {
+    if (!this.canRunInContext(c, msg)) return Promise.resolve(false);
+
+    const run = () => {
+      let result;
+
+      try {
+        result = c.fn(msg);
+      } catch (e) {
+        return Promise.resolve(this.fail(e));
+      }
+
+      return Promise.resolve(result)
+        .catch(e => this.fail(e))
+        .then(() => this.emit('command', msg))
+        .then(() => true);
+    };
+
+    if (!c.check) return run();
+
+    let check;
+
+    try {
+      check = c.check(msg);
+    } catch (e) {
+      return Promise.resolve(this.fail(e)).then(() => false);
+    }
+
+    return Promise.resolve(check)
+      .then(ok => ok !== false ? run() : false)
+      .catch(e => Promise.resolve(this.fail(e)).then(() => false));
+  }
+
+
+  handle(ev) {
     const data = ev.data || {};
+
+    const runCommand = (c, msg) => {
+      // Context restrictions
+      const dm = msg.dm === true || msg.is_dm === true;
+
+      if (c.dmOnly && c.serverOnly) return Promise.resolve(false);
+      if (c.dmOnly && !dm) return Promise.resolve(false);
+      if (c.serverOnly && dm) return Promise.resolve(false);
+
+      // Run cog check before executing
+      let check;
+
+      try {
+        check = c.check ? c.check(msg) : true;
+      } catch (e) {
+        return Promise.resolve(this.fail(e)).then(() => false);
+      }
+
+      return Promise.resolve(check)
+        .then(ok => {
+          if (ok === false) return false;
+
+          let result;
+
+          try {
+            result = c.fn(msg);
+          } catch (e) {
+            return Promise.resolve(this.fail(e)).then(() => false);
+          }
+
+          return Promise.resolve(result)
+            .catch(e => this.fail(e))
+            .then(() => this.emit('command', msg))
+            .then(() => true);
+        })
+        .catch(e => Promise.resolve(this.fail(e)).then(() => false));
+    };
+
     if (ev.type === 'message') {
-      // Messages from bots and webhooks (author_bot): skipped unless the bot asked for them (ignoreBots: false).
-      if (this.ignoreBots && data.author_bot) return;
+      // Messages from bots and webhooks
+      if (this.ignoreBots && data.author_bot) return Promise.resolve();
+
       const msg = this.wrap(data);
       let name = data.command;
       let args = data.args;
-      // "/fish @OtherBot": a command picked for another bot (command_for) isn't ours to answer, even if we have /fish.
-      const forOther = Array.isArray(data.command_for) && !data.command_for.includes(this.me?.id);
+
+      // Commands explicitly picked for another bot aren't ours
+      const forOther = Array.isArray(data.command_for) &&
+        !data.command_for.includes(this.me?.id);
+
       if (!name && !forOther) {
-        // Commands typed with another prefix, or ones we didn't register. A prefix can be longer than one
-        // character ('yap!'); the longest one that fits goes first so '!!' wins over '!'.
+        // Match the longest available prefix first
         const content = data.content || '';
+
         for (const p of [...this.prefixes].sort((a, b) => b.length - a.length)) {
           if (!p || !content.startsWith(p)) continue;
-          const m = /^([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i.exec(content.slice(p.length));
-          if (m && this.commands.has(m[1].toLowerCase())) { name = m[1].toLowerCase(); args = (m[2] || '').trim(); break; }
-        }
-      }
-      if (name && this.commands.has(name)) {
-        const c = this.commands.get(name);
-        msg.command = name;
-        msg.args = args || '';
-        msg.argv = msg.args ? msg.args.split(/\s+/) : [];
-        // A cog's check(msg) runs first; false (or an error) skips the command.
-        let ok = true;
-        if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
-        if (ok) {
-          // fix for command blocking queue & dm only commands
-          if (c.dmOnly) {
-            await msg.reply(`\`/${msg.command}\` can only be used in DMs.`);
-          } else {
-            void Promise.resolve()
-              .then(() => c.fn(msg))
-              .catch(async (e) => {
-                try {
-                  await this.fail(e);
-                } catch (reportError) {
-                  console.error('[yapper] Failed to report command error:', reportError);
-                }
-              });
 
-            void this.emit('command', msg).catch((e) => {
-              console.error('[yapper] Command event listener failed:', e);
-            });
+          const m = /^([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i.exec(
+            content.slice(p.length)
+          );
+
+          if (m && this.commands.has(m[1].toLowerCase())) {
+            name = m[1].toLowerCase();
+            args = (m[2] || '').trim();
+            break;
           }
         }
       }
-      void this.emit('message', msg).catch(e => {
-        console.error('[yapper] Message event listener failed:', e);
-      });
+
+      let commandPromise = Promise.resolve();
+
+      if (name && this.commands.has(name)) {
+        const c = this.commands.get(name);
+
+        msg.command = name;
+        msg.args = args || '';
+        msg.argv = msg.args ? msg.args.split(/\s+/) : [];
+
+        commandPromise = runCommand(c, msg);
+      }
+
+      return commandPromise
+        .then(() => this.emit('message', msg))
+        .catch(e => this.fail(e));
+
     } else if (ev.type === 'command') {
-      // A slash command picked from the / menu (flag bot_slash_interactions): nothing was posted in chat. msg works
-      // like a command message; msg.reply answers it (shown with "<user> used /cmd"), msg.ephemeral only to them.
+      // Slash command
       const msg = this.wrapCommand(data);
       const c = this.commands.get(msg.command);
-      if (!c) { await this.respond(data, 'ephemeral', { content: `/${msg.command} isn't a command of this bot anymore` }).catch(() => { }); return; }
-      let ok = true;
-      if (c.check) { try { ok = (await c.check(msg)) !== false; } catch (e) { ok = false; await this.fail(e); } }
-      if (ok) {
-        if (c.dmOnly) {
-          await msg.reply(`\`/${msg.command}\` can only be used in DMs.`);
-        } else {
-          void Promise.resolve()
-            .then(() => c.fn(msg))
-            .catch(async (e) => {
-              try {
-                await this.fail(e);
-              } catch (reportError) {
-                console.error('[yapper] Failed to report command error:', reportError);
-              }
-            });
 
-          void this.emit('command', msg).catch((e) => {
-            console.error('[yapper] Command event listener failed:', e);
-          });
-        }
+      if (!c) {
+        return this.respond(data, 'ephemeral', {
+          content: `/${msg.command} isn't a command of this bot anymore`
+        }).catch(() => { });
       }
+
+      return runCommand(c, msg);
+
     } else if (ev.type === 'interaction') {
       const i = this.wrapInteraction(data);
-      const kind = data.type === 'select' || data.type === 'modal_submit' ? data.type : 'button';
+      const kind = data.type === 'select' || data.type === 'modal_submit'
+        ? data.type
+        : 'button';
+
+      const tasks = [];
+
       for (const b of this.buttons) {
         if ((b.kind || 'button') !== kind) continue;
-        // lastIndex reset: a /g or /y pattern keeps its place between tests, which made every other click miss.
-        const hit = b.match instanceof RegExp ? ((b.match.lastIndex = 0), b.match.test(data.custom_id)) : b.match === data.custom_id;
-        if (hit) { try { await b.fn(i); } catch (e) { await this.fail(e); } }
+
+        // Reset regex lastIndex before testing
+        const hit = b.match instanceof RegExp
+          ? ((b.match.lastIndex = 0), b.match.test(data.custom_id))
+          : b.match === data.custom_id;
+
+        if (hit) {
+          let result;
+
+          try {
+            result = b.fn(i);
+          } catch (e) {
+            result = Promise.reject(e);
+          }
+
+          tasks.push(
+            Promise.resolve(result).catch(e => this.fail(e))
+          );
+        }
       }
-      await this.emit('interaction', i);
+
+      return Promise.all(tasks)
+        .then(() => this.emit('interaction', i));
+
     } else if (ev.type === 'dm_message') {
-      // A DM to this bot. Commands aren't run here (they are for servers); answer in onDm / on('dm_message').
-      if (this.ignoreBots && data.author_bot) return;
+      // Direct messages
+      if (this.ignoreBots && data.author_bot) return Promise.resolve();
+
       const msg = this.wrap(data);
+
       msg.dm = true;
       msg.is_dm = true;
       msg.dm_channel_id ||= data.channel_id;
 
-      const match = /^\/([a-z0-9_-]{1,32})(?:\s+([\s\S]*))?$/i
-        .exec((msg.content || '').trim());
+      if (msg.content.startsWith('/')) {
+        const commandMsg = this.wrapCommand(data);
 
-      if (match) {
-        const name = match[1].toLowerCase();
-        const c = this.commands.get(name);
+        commandMsg.dm = true;
+        commandMsg.is_dm = true;
+        commandMsg.dm_channel_id ||= data.channel_id;
 
-        if (c && !c.serverOnly) {
-          msg.command = name;
-          msg.args = (match[2] || '').trim();
-          msg.argv = msg.args ? msg.args.split(/\s+/) : [];
+        const c = this.commands.get(commandMsg.command);
 
-          let ok = true;
-
-          if (c.check) {
-            try {
-              ok = (await c.check(msg)) !== false;
-            } catch (e) {
-              ok = false;
-              await this.fail(e);
-            }
-          }
-
-          if (ok) {
-            void Promise.resolve()
-              .then(() => c.fn(msg))
-              .catch(e => this.fail(e));
-
-            void this.emit('command', msg);
-          }
-        } else if (c && c.serverOnly) {
-          msg.reply(`\`/${match[1].toLowerCase()}\` is a server-only command.`);
+        if (!c) {
+          return this.respond(data, 'ephemeral', {
+            content: `/${commandMsg.command} isn't a command of this bot anymore`
+          }).catch(() => { });
         }
+
+        return runCommand(c, commandMsg);
       }
 
-      await this.emit('dm_message', msg);
+      return this.emit('dm_message', msg);
+
     } else {
-      await this.emit(ev.type, { ...data, type: ev.type });
+      // Channel / thread events
+      const own = (data.object === 'channel' || data.object === 'thread') &&
+        typeof data.type === 'string';
+
+      return this.emit(ev.type, {
+        ...data,
+        type: own ? data.type : ev.type,
+        event: ev.type
+      });
     }
   }
+
 
   wrapInteraction(data) {
     const bot = this;
