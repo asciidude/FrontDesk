@@ -592,18 +592,6 @@ export class Utils extends Cog {
                         return;
                     }
                 } catch (e: any) {
-                    db.transaction(() => {
-                        db.prepare(`
-                            DELETE FROM tickets
-                            WHERE server_id = ?
-                        `).run(serverId);
-
-                        db.prepare(`
-                            DELETE FROM servers
-                            WHERE server_id = ?
-                        `).run(serverId);
-                    })();
-
                     if (e instanceof SetupCancelled)
                         return;
 

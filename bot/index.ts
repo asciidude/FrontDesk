@@ -23,8 +23,6 @@ export let activeSetups = new Map<string, {
     cancel?: () => void
 }>();
 
-await bot.loadCogs('./cogs');
-
 // Open the database & export it for use across the project
 export const db: DB = new Database(process.env.NODE_ENV === 'production' ? './db/database.db' : './db_dev/database.db');
 
@@ -115,12 +113,18 @@ db.exec(`
     ON ticket_panels(server_id);
 `);
 
+await bot.loadCogs('./cogs');
+
 bot.on('ready', async () => {
     bot.setStatus('online', 'Looking for tickets...');
 
     // check every 5 seconds for channel deletion | TODO: stagger api calls
+    let checkTickets = false;
     setInterval(async () => {
         // TODO: move to channel_delete event when it works
+        if(checkTickets) return;
+        checkTickets = true;
+
         const servers: any[] = db.prepare(`
             SELECT server_id
             FROM servers

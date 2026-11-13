@@ -290,6 +290,8 @@ export class Utils extends Cog {
                     return;
                 }
 
+                console.log(tickets);
+
                 let ticketEmbed = new Embed({
                     title: 'Open Tickets',
                     fields: [
