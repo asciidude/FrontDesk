@@ -268,7 +268,7 @@ export class Utils extends Cog {
                             const channelsToDelete = channels.filter((c: any) =>
                                 c.object === 'channel' &&
                                 c.server_id === serverId &&
-                                categoryIds.includes(c.category?.id)
+                                categoryIds.includes(c.category_id)
                             );
 
                             for (let i = 0; i < channelsToDelete.length; i += 5) {
@@ -276,7 +276,7 @@ export class Utils extends Cog {
 
                                 await Promise.all(
                                     batch.map((c: any) =>
-                                        this.bot.deleteChannel(serverId, c.id)
+                                        this.bot.deleteChannel(c.id)
                                     )
                                 );
 
