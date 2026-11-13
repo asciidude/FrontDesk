@@ -120,7 +120,7 @@ bot.on('ready', async () => {
 
     // check every 5 seconds for channel deletion | TODO: stagger api calls
     setInterval(async () => {
-        // TODO: move to channel_delete event
+        // TODO: move to channel_delete event when it works
         const servers: any[] = db.prepare(`
             SELECT server_id
             FROM servers
