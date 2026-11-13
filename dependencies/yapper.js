@@ -715,7 +715,7 @@ export class Bot {
   /** The bot's banner, same inputs as setAvatar. @see https://www.yapin.gg/developers/api/bot#put-me-banner */
   async setBanner(image, type) { return this.#upload('/me/banner', image, type); }
   /** Online status and what the bot is "playing": setStatus('dnd', 'Moderating'). Status: online, idle, dnd. @see https://www.yapin.gg/developers/api/bot#put-me-status */
-  async setStatus(status = 'online', activity = null) {
+  async setStatus(status = 'online', activity = '') {
     const out = await this.api('PUT', '/me/status', { status, activity });
     // Connected to the gateway: tell it too, so the dot and activity change there at once.
     try { if (this._ws?.readyState === 1) this._ws.send(JSON.stringify({ op: 'presence', status, activity })); } catch { /* closed */ }
