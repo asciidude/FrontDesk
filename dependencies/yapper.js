@@ -166,7 +166,7 @@ async function locate(target) {
   }
   // 'cogs/fun' works too: try .js and .mjs.
   const found = tries.flatMap((p) =>
-    /\.(?:m?js|mts?|cts?)$/i.test(p)
+    /\.(?:m?js|m?ts)$/i.test(p)
       ? [p]
       : [p, `${p}.js`, `${p}.mjs`, `${p}.ts`, `${p}.mts`]
   ).find((p) => fs.existsSync(p));
@@ -325,7 +325,7 @@ export class Bot {
       const files = (await fs.readdir(abs, { withFileTypes: true }))
         .filter((d) =>
           d.isFile() &&
-          /\.(?:m?js|mts?)$/i.test(d.name) &&
+          /\.(?:m?js|m?ts)$/i.test(d.name) &&
           !/^[_.]/.test(d.name)
         )
         .map((d) => d.name)
@@ -391,7 +391,9 @@ export class Bot {
 
   #findCog(name) {
     const key = String(name ?? '');
-    const owner = this.cogs.get(key) || this.cogs.get(key.replace(/^.*[\\/]/, '').replace(/\.m?js$/i, ''));
+    const owner = this.cogs.get(key) || this.cogs.get(
+      key.replace(/^.*[\\/]/, '').replace(/\.(?:m?js|m?ts)$/i, '')
+    );
     if (!owner) throw new Error(`No cog called "${key}" is loaded${this.cogs.size ? ` (loaded: ${[...this.cogs.keys()].join(', ')})` : ''}`);
     return owner;
   }
@@ -402,7 +404,7 @@ export class Bot {
 
   async #loadFile(file, version) {
     const { abs, url, label } = await locate(file);
-    const name = label.replace(/^.*\//, '').replace(/\.m?js$/i, '');
+    const name = label.replace(/^.*\//, '').replace(/\.(?:m?js|m?ts)$/i, '');
     if (this.cogs.has(name)) throw new Error(`A cog called "${name}" is already loaded (${this.cogs.get(name).label}). To load it again: bot.reload('${name}')`);
     const owner = this.#owner(name, abs);
     owner.label = label;
