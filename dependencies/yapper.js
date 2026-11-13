@@ -336,7 +336,7 @@ export class Bot {
         names.push(await this.#loadFile(path.join(abs, f), 0));
       }
 
-      return names;
+      return names
     })());
   }
 
