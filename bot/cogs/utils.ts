@@ -52,6 +52,7 @@ export class Utils extends Cog {
 
                 let cancelled = false;
                 let cancelCollector: (() => void) | undefined;
+                let rejectCurrentCollector: ((reason: Error) => void) | undefined;
 
                 let embedColor = '#c76828';
 
@@ -168,15 +169,27 @@ export class Utils extends Cog {
                 }
 
                 // Promise for sequential execution
-                const collectResponse = (filter: null | ((msg: any) => boolean | Promise<boolean>), options: any): Promise<any[]> => {
+                const collectResponse = (
+                    filter: null | ((msg: any) => boolean | Promise<boolean>),
+                    options: any
+                ): Promise<any[]> => {
                     return new Promise((resolve, reject) => {
+                        if (cancelled) {
+                            reject(new SetupCancelled());
+                            return;
+                        }
+
                         const collector = new MessageCollector(
                             switchboard,
                             filter,
                             options,
                             async (messages: any[]) => {
-                                if (cancelled)
+                                rejectCurrentCollector = undefined;
+
+                                if (cancelled) {
+                                    reject(new SetupCancelled());
                                     return;
+                                }
 
                                 if (await checkTimeout(messages)) {
                                     reject(new Error('Setup timed out'));
@@ -187,23 +200,20 @@ export class Utils extends Cog {
                             }
                         );
 
-                        cancelCollector = async () => {
-                            await editEmbed(
-                                setupEmbed
-                                    .title('Setup cancelled')
-                                    .description('You have cancelled guided setup for FrontDesk.')
-                                    .color('red'),
-                                false
-                            );
+                        rejectCurrentCollector = reject;
+
+                        cancelCollector = () => {
+                            if (cancelled) return;
 
                             cancelled = true;
                             collector.stop();
                             reject(new SetupCancelled());
-                        }
+                        };
 
                         const setup = activeSetups.get(serverId);
-                        if (setup)
+                        if (setup) {
                             setup.cancel = cancelCollector;
+                        }
                     });
                 };
 
@@ -602,6 +612,7 @@ export class Utils extends Cog {
                             .color('red'),
                         false
                     );
+
                     throw e;
                 } finally {
                     await editEmbed(setupEmbed, false);
@@ -632,16 +643,16 @@ export class Utils extends Cog {
     }
 
     cogLoad() {
-        this.bot.on('setup:cancel', (ev: {
-            serverId: string, authorId: string
+        this.bot.on('setup:cancel', async (ev: {
+            serverId: string,
+            authorId: string
         }) => {
             const setup = activeSetups.get(ev.serverId);
 
             if (!setup || setup.authorId !== ev.authorId)
                 return;
 
-            setup.cancel?.();
-            activeSetups.delete(ev.serverId);
+            await setup.cancel?.();
         });
 
         console.log('[COGS] Utility commands loaded.')
