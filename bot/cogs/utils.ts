@@ -502,8 +502,9 @@ export class Utils extends Cog {
                             setupEmbed
                                 .title('Guided Setup')
                                 .description(`I have successfully created the categories.\n\n**I cannot change the permissions in these categories.** You must do it yourself, but make sure I'm allowed to see them otherwise I won't work in your server.\n\nSaving your changes to the database now & creating the panel!`)
-                                .color(embedColor)
-                        )
+                                .color(embedColor),
+                            false
+                        );
 
                         // another 3 sec. delay for notice
                         await new Promise(resolve => setTimeout(resolve, 3000));
