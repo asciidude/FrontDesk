@@ -240,7 +240,7 @@ export class Utils extends Cog {
 
                         if (!confirmRequest[0])
                             return;
-                        
+
                         // Delete panel messages
                         const panels: any[] = db.prepare(`
                             SELECT *
@@ -248,19 +248,46 @@ export class Utils extends Cog {
                             WHERE server_id = ?
                         `).all(serverId);
 
-                        for(const panel of panels) {
-                            try{
+                        for (const panel of panels) {
+                            try {
                                 await this.bot.delete(panel.channel_id, panel.message_id)
-                            } catch(err: any) {
+                            } catch (err: any) {
                                 console.error(err);
                             }
                         }
 
                         // Delete open/closed ticket categories
                         try {
+                            const channels = await this.bot.channels(serverId);
+
+                            const categoryIds = [
+                                server.open_ticket_category,
+                                server.closed_ticket_category
+                            ].filter(Boolean);
+
+                            const channelsToDelete = channels.filter((c: any) =>
+                                c.object === 'channel' &&
+                                c.server_id === serverId &&
+                                categoryIds.includes(c.category?.id)
+                            );
+
+                            for (let i = 0; i < channelsToDelete.length; i += 5) {
+                                const batch = channelsToDelete.slice(i, i + 5);
+
+                                await Promise.all(
+                                    batch.map((c: any) =>
+                                        this.bot.deleteChannel(serverId, c.id)
+                                    )
+                                );
+
+                                if (i + 5 < channelsToDelete.length) {
+                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                                }
+                            }
+
                             await this.bot.deleteCategory(serverId, server.open_ticket_category);
                             await this.bot.deleteCategory(serverId, server.closed_ticket_category);
-                        } catch(e: any) {
+                        } catch (e: any) {
                             console.error(e);
                         }
 
@@ -353,27 +380,27 @@ export class Utils extends Cog {
                         thumbnail: string | null
                     };
 
-                    while(true) {
-                        const response = await collectResponse((m:any) => isAuthor(m), options);
-                        const parts = response[0].content.split('\n').map((ln:string) => ln.trim());
-                        
+                    while (true) {
+                        const response = await collectResponse((m: any) => isAuthor(m), options);
+                        const parts = response[0].content.split('\n').map((ln: string) => ln.trim());
+
                         const [name, description, color, thumbnail] = parts;
                         const errors: string[] = [];
 
-                        if(!name || !description) {
+                        if (!name || !description) {
                             errors.push('Panel name and description are required.')
                         }
 
-                        if(name.length > 256) {
+                        if (name.length > 256) {
                             errors.push('Panel name must be less than 256 characters.');
                         }
 
-                        if(description.length > 4096) {
+                        if (description.length > 4096) {
                             // is this even possible in a normal chat?? xD
                             errors.push('Panel description must be less than 4,096 characters.');
                         }
 
-                        if(color && !/^#[0-9A-Fa-f]{6}$/.test(color)) {
+                        if (color && !/^#[0-9A-Fa-f]{6}$/.test(color)) {
                             errors.push('Panel color is invalid, please use HEX format (e.g. #784FC9)');
                         }
 
@@ -389,7 +416,7 @@ export class Utils extends Cog {
                             }
                         }
 
-                        if(errors.length === 0) {
+                        if (errors.length === 0) {
                             const message = await this.bot.send(panelChannelId, '', {
                                 embeds: [
                                     new Embed({
@@ -463,7 +490,7 @@ export class Utils extends Cog {
 
                     // 3 sec. delay for review
                     await new Promise(resolve => setTimeout(resolve, 3000));
-                    
+
                     try {
                         const openCategory = await this.bot.createCategory(serverId, 'Open Tickets');
                         setupResources.categories.push(openCategory.id);
@@ -537,18 +564,18 @@ export class Utils extends Cog {
                             false
                         )
                     } catch (e: any) {
-                        for(const message of setupResources.messages) {
+                        for (const message of setupResources.messages) {
                             try {
                                 await this.bot.delete(message.channelId, message.messageId);
-                            } catch(e:any) {
+                            } catch (e: any) {
                                 console.error(e);
                             }
                         }
 
-                        for(const categoryId of setupResources.categories) {
+                        for (const categoryId of setupResources.categories) {
                             try {
                                 await this.bot.deleteCategory(serverId, categoryId);
-                            } catch(e:any) {
+                            } catch (e: any) {
                                 console.error(e);
                             }
                         }
@@ -560,7 +587,7 @@ export class Utils extends Cog {
                                 .color('red'),
                             false
                         );
-                        
+
                         return;
                     }
                 } catch (e: any) {
@@ -575,8 +602,8 @@ export class Utils extends Cog {
                             WHERE server_id = ?
                         `).run(serverId);
                     })();
-                    
-                    if(e instanceof SetupCancelled)
+
+                    if (e instanceof SetupCancelled)
                         return;
 
                     await editEmbed(

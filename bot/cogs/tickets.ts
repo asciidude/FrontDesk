@@ -291,7 +291,12 @@ export class Utils extends Cog {
                 }
 
                 let ticketEmbed = new Embed({
-                    
+                    title: 'Open Tickets',
+                    fields: [
+                        
+                    ],
+                    description: '',
+                    timestamp: new Date()
                 });
             }
         }
