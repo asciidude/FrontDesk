@@ -1,8 +1,9 @@
-import { Cog, Embed } from '../../dependencies/yapper.js';
-import { checkPermissions } from '../../utils/checkPermissions.js';
+import { Button, Cog, Embed, Row } from '../../dependencies/yapper.js';
+import { InteractionCollector } from '../../utils/InteractionCollector.js';
 import { isAdminOrSupport } from '../../utils/isAdminOrSupport.js';
+import { paginateFields, type EmbedField } from '../../utils/pagintateFields.js';
 import { splitString } from '../../utils/stringSplitter.js';
-import { db } from '../index.js';
+import { db, interactionSwitchboard } from '../index.js';
 
 export class Utils extends Cog {
     commands = {
@@ -281,7 +282,7 @@ export class Utils extends Cog {
                     AND status = 'open'
                 `).all(userId);
 
-                if(tickets.length === 0) {
+                if (tickets.length === 0) {
                     this.bot.dmSend(
                         userId,
                         'You have no active tickets.'
@@ -290,16 +291,96 @@ export class Utils extends Cog {
                     return;
                 }
 
-                console.log(tickets);
+                let fields: EmbedField[] = [];
+                const groupedTickets = Object.groupBy(tickets, (ticket: any) => ticket.server_id);
 
-                let ticketEmbed = new Embed({
+                for (const [serverId, serverTickets] of Object.entries(groupedTickets)) {
+                    const server = await this.bot.server(serverId);
+                    let ticketIds: string[] = [];
+
+                    for (const ticket of serverTickets!) {
+                        ticketIds.push(`\`${ticket.ticket_id}\` - opened <t:${Math.floor(new Date(ticket.created_at).getTime() / 1000)}>`);
+                    }
+
+                    fields.push({
+                        name: server.name.slice(0, 256),
+                        value: ticketIds.join('\n')
+                    });
+                }
+
+                let reserved = {
                     title: 'Open Tickets',
-                    fields: [
-                        
-                    ],
-                    description: '',
+                    description: 'Switch to a ticket using `/switch <ticket ID>`',
+                    footer: {
+                        text: 'FrontDesk by asciixd',
+                        icon_url: process.env.ICON_URL
+                    }
+                };
+
+                const pages = paginateFields(fields, {
+                    title: reserved.title,
+                    description: reserved.description,
+                    footerText: reserved.footer.text
+                });
+
+                const createEmbed = (page: number) => new Embed({
+                    title: reserved.title,
+                    fields: pages[page],
+                    description: reserved.description,
+                    footer: {
+                        ...reserved.footer,
+                        text: `${reserved.footer.text} • Page ${page + 1}/${pages.length}`
+                    },
                     timestamp: new Date()
                 });
+
+                const createComponents = (page: number) => [
+                    new Row(
+                        Button.primary('Back', 'tickets:back_page')
+                            .emoji('⏮️')
+                            .disabled(page <= 0),
+                        Button.primary('Next Page', 'tickets:next_page')
+                            .emoji('⏭️')
+                            .disabled(page >= pages.length - 1)
+                    )
+                ];
+
+                let currentPage = 0;
+
+                const message = await this.bot.dmSend(userId, '', {
+                    embeds: [createEmbed(currentPage)],
+                    components: createComponents(currentPage)
+                });
+
+                new InteractionCollector(
+                    interactionSwitchboard,
+                    (i: any) =>
+                        i.user_id === userId
+                        && i.message_id === message.id
+                        && i.custom_id.startsWith('tickets:'),
+                    { duration: 300000 },
+                    async (i:any) => {
+                        if(pages.length === 0)
+                            return;
+
+                        switch(i.custom_id) {
+                            case 'tickets:next_page':
+                                currentPage++;
+                                break;
+                            case 'tickets:back_page':
+                                currentPage--;
+                                break;
+                        }
+
+                        await this.bot.edit(
+                            message.channel_id, message.id, '',
+                            {
+                                embeds: [createEmbed(currentPage)],
+                                components: createComponents(currentPage)
+                            }
+                        )
+                    }
+                );
             }
         }
     };

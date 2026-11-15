@@ -3,6 +3,7 @@ import { Bot, Embed } from '../dependencies/yapper.js';
 import { MessageSwitchboard } from '../utils/MessageSwitchboard';
 import { createTicket } from '../utils/createTicket';
 import { closeTicket } from '../utils/closeTicket.js';
+import { InteractionSwitchboard } from '../utils/InteractionSwitchboard.js';
 
 if (
     process.env.NODE_ENV !== 'production'
@@ -14,7 +15,8 @@ const bot = new Bot(process.env.BOT_TOKEN!, {
     log: true
 });
 
-export const switchboard = new MessageSwitchboard(bot);
+export const messageSwitchboard = new MessageSwitchboard(bot);
+export const interactionSwitchboard = new InteractionSwitchboard(bot);
 
 // used for /setup command so servers can't run 2 setups at once
 export let activeSetups = new Map<string, {

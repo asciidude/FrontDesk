@@ -1,4 +1,4 @@
-import { activeSetups, db, switchboard } from '..';
+import { activeSetups, db, messageSwitchboard } from '..';
 import { Button, Cog, Embed, Row } from '../../dependencies/yapper.js';
 import { checkPermissions } from '../../utils/checkPermissions';
 import { MessageCollector } from '../../utils/MessageCollector';
@@ -180,7 +180,7 @@ export class Utils extends Cog {
                         }
 
                         const collector = new MessageCollector(
-                            switchboard,
+                            messageSwitchboard,
                             filter,
                             options,
                             async (messages: any[]) => {

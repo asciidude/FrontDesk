@@ -41,7 +41,10 @@ export const paginateFields = (
             ) {
                 pages.push(currentPage);
                 currentPage = [];
-                currentCharacters = reserved.description.length + reserved.footerText.length + reserved.title.length;
+                currentCharacters =
+                    reserved.description.length
+                    + reserved.footerText.length
+                    + reserved.title.length;
             }
 
             currentPage.push(nextField);
