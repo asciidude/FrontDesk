@@ -4,9 +4,9 @@ export class InteractionSwitchboard {
     constructor(client: any) {
         this.activeCollectors = new Set();
 
-        client.on('interactionCreate', async (interaction: any) => {
+        client.on('interaction', async (i: any) => {
             for (const collector of this.activeCollectors) {
-                await collector.processInteraction(interaction);
+                await collector.processInteraction(i);
             }
         });
     }
