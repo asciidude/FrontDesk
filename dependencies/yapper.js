@@ -16,12 +16,13 @@
  *   await bot.loadCogs('./cogs');   // optional: more commands from cogs/*.js (see Cog below)
  *   bot.start();
  *
- * Nothing to host: the bot fetches its own events from Yapin’ (long polling), so it runs on your PC.
+ * Nothing to host: the bot keeps one WebSocket open to Yapin’ (the gateway) and long polls when that is down,
+ * so it runs on your PC.
  * Verified bots can also run on Yapin’s bot hosting, which passes the token in process.env.YAPPER_BOT_TOKEN.
  * Docs: https://www.yapin.gg/developers
  */
-/** SDK version, stamped from public/sdk/version.json by scripts/sdk-build.mjs (same as the npm package "yapin"). */
-export const VERSION = '1.7.0';
+/** SDK version, stamped from public/sdk/version.json by scripts/sdk-build.mjs. */
+export const VERSION = '1.8.0';
 /** Embeds, buttons and rows can be builders or plain objects. */
 /** Message flag for Components V2 layouts (IS_COMPONENTS_V2, 1 << 15). */
 export const IS_COMPONENTS_V2 = 1 << 15;
@@ -47,6 +48,115 @@ export function isMessage(x) { return isKind(x, 'message'); }
 const plain = (x) => (x && typeof x.toJSON === 'function' ? x.toJSON() : x);
 const list = (v) => (v === undefined ? undefined : v === null ? null : [].concat(v).map(plain));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** The one call a nonce makes safe to repeat. */
+const SEND_PATH = /^\/channels\/[^/]+\/messages$/;
+/** An id for one send (the API's nonce): 22 url-safe characters. */
+const newNonce = () => (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID().replace(/-/g, '').slice(0, 22) : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`.padEnd(12, '0'));
+
+// ---- command options (in testing, flag bot_command_options) ----
+const OPT_ID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+const optionHint = (o) => {
+  if (o.choices) return `one of: ${o.choices.map((c) => (c && typeof c === 'object' ? c.value : c)).join(', ')}`;
+  return { integer: 'a whole number', number: 'a number', boolean: 'yes or no', user: '@someone', channel: '#channel', role: '@role' }[o.type] || 'text';
+};
+/** "/ban <user> [reason…]": how to type a command, from its options. Required in <>, optional in []. */
+export function commandUsage(name, options = []) {
+  const parts = options.map((o, i) => {
+    const rest = i === options.length - 1 && (o.type || 'string') === 'string' && !o.choices ? '…' : '';
+    const inner = o.choices ? o.choices.map((c) => (c && typeof c === 'object' ? c.value : c)).join('|') : `${o.name}${rest}`;
+    return o.required ? `<${inner}>` : `[${inner}]`;
+  });
+  return `/${name}${parts.length ? ` ${parts.join(' ')}` : ''}`;
+}
+/**
+ * Turn the text after a command into values by name, by position: one word each, and a last text option takes the
+ * rest of the line. Returns { values } or { error } (words for the person who typed it). user, channel and role
+ * give the id. The SDK does this for you: handlers read msg.options.
+ */
+export function parseOptions(options = [], args = '') {
+  const values = {};
+  let rest = String(args || '').trim();
+  const named = namedArgs(options, rest);
+  if (named) {
+    for (const o of options) {
+      const raw = (named.get(o.name) ?? '').trim();
+      if (!raw) {
+        if (o.required) return { error: `Missing ${o.name} (${optionHint(o)})` };
+        continue;
+      }
+      const got = (o.type || 'string') === 'string' && !o.choices ? { value: raw } : /\s/.test(raw) ? { error: `${o.name} must be ${optionHint(o)}` } : optionValue(o, raw);
+      if (got.error) return got;
+      values[o.name] = got.value;
+    }
+    return { values };
+  }
+  for (let i = 0; i < options.length; i++) {
+    const o = options[i];
+    const last = i === options.length - 1;
+    const whole = last && (o.type || 'string') === 'string' && !o.choices;
+    const m = /^(\S+)\s*/.exec(rest);
+    const word = whole ? rest : m ? m[1] : '';
+    if (!word) {
+      if (o.required) return { error: `Missing ${o.name} (${optionHint(o)})` };
+      continue;
+    }
+    const got = optionValue(o, word);
+    if (got.error) {
+      // An optional value that doesn't fit is taken as left out: the word is tried on the next option.
+      if (o.required || last) return got;
+      continue;
+    }
+    values[o.name] = got.value;
+    rest = whole ? '' : rest.slice(m[0].length);
+  }
+  // Never echo what was typed: the bot posts this text, and it could be made to ping someone or say anything.
+  if (rest) return { error: 'Too many values' };
+  return { values };
+}
+const NAMED = /^\s*([a-z0-9_-]{1,32})=(?:"((?:[^"\\]|\\[\s\S])*)"|(\S*))/;
+/**
+ * Values by name, the way the app's form sends them: user=<@id> days=7 reason="spam and \"ads\"". Only when the whole
+ * text is name=value pairs of this command's options, each at most once; anything else is read by position. A Map, or null.
+ */
+function namedArgs(options, args) {
+  if (!args.trim()) return null;
+  const names = new Set(options.map((o) => o.name));
+  const out = new Map();
+  let rest = args;
+  while (rest.trim()) {
+    const m = NAMED.exec(rest);
+    if (!m || !names.has(m[1]) || out.has(m[1])) return null;
+    const after = rest.slice(m[0].length);
+    if (after && !/^\s/.test(after)) return null;
+    out.set(m[1], m[2] !== undefined ? m[2].replace(/\\([\s\S])/g, '$1') : m[3]);
+    rest = after;
+  }
+  return out;
+}
+/** One typed word as the value of one option: { value } or { error }. */
+function optionValue(o, word) {
+  const type = o.type || 'string';
+  if (o.choices) {
+    const list = o.choices.map((c) => (c && typeof c === 'object' ? c : { name: String(c), value: c }));
+    const w = word.toLowerCase();
+    const hit = list.find((c) => String(c.value).toLowerCase() === w) ?? list.find((c) => String(c.name ?? c.value).toLowerCase() === w);
+    return hit ? { value: hit.value } : { error: `${o.name} must be ${optionHint(o)}` };
+  }
+  if (type === 'integer') return /^-?\d{1,15}$/.test(word) ? { value: Number(word) } : { error: `${o.name} must be a whole number` };
+  if (type === 'number') return /^-?(\d{1,15}(\.\d{0,15})?|\.\d{1,15})$/.test(word) ? { value: Number(word) } : { error: `${o.name} must be a number` };
+  if (type === 'boolean') {
+    if (/^(true|yes|y|on|1)$/i.test(word)) return { value: true };
+    if (/^(false|no|n|off|0)$/i.test(word)) return { value: false };
+    return { error: `${o.name} must be yes or no` };
+  }
+  if (type === 'user' || type === 'role' || type === 'channel') {
+    const open = type === 'user' ? '<@!?' : type === 'role' ? '<@&' : '<#';
+    const m = new RegExp(`^(?:${open}(${OPT_ID})>|(${OPT_ID}))$`, 'i').exec(word);
+    if (m) return { value: (m[1] || m[2]).toLowerCase() };
+    return { error: type === 'user' ? `${o.name} must be a person: @mention them` : type === 'role' ? `${o.name} must be a role: @mention it` : `${o.name} must be a channel: pick it with #` };
+  }
+  return { value: word };
+}
 const isForm = (b) => typeof FormData !== 'undefined' && b instanceof FormData;
 /** One file for send({ files }): a path (Node), a Blob/File, or { name, data } with bytes, a Blob or a string. */
 async function filePart(f) {
@@ -82,7 +192,7 @@ async function checkVersion(base, log) {
   try {
     const res = await fetch(`${base}/version`, { headers: { 'user-agent': `yapper-sdk/${VERSION}` }, signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(5000) : undefined });
     const latest = res.ok ? (await res.json())?.sdk?.js : null;
-    if (typeof latest === 'string' && newer(latest, VERSION)) console.warn(`[yapper] SDK ${VERSION} is behind the latest ${latest}: npm install yapin@latest, or download https://www.yapin.gg/sdk/yapper.js again`);
+    if (typeof latest === 'string' && newer(latest, VERSION)) console.warn(`[yapper] SDK ${VERSION} is behind the latest ${latest}: download https://www.yapin.gg/sdk/yapper.js again`);
   } catch { /* offline or an older server: no warning */ }
 }
 /** Wait before retry number n (1, 2, …): 1s, 2s, 4s … up to 30s, with some jitter so many bots don't sync up. */
@@ -165,11 +275,7 @@ async function locate(target) {
     tries = [...new Set([main && path.resolve(main, raw), path.resolve(process.cwd(), raw)].filter(Boolean))];
   }
   // 'cogs/fun' works too: try .js and .mjs.
-  const found = tries.flatMap((p) =>
-    /\.(?:m?js|m?ts)$/i.test(p)
-      ? [p]
-      : [p, `${p}.js`, `${p}.mjs`, `${p}.ts`, `${p}.mts`]
-  ).find((p) => fs.existsSync(p));
+  const found = tries.flatMap((p) => (/\.m?js$/i.test(p) ? [p] : [p, `${p}.js`, `${p}.mjs`])).find((p) => fs.existsSync(p));
   if (!found) throw new Error(`Can't find ${raw} (looked at ${tries.join(' and ')})`);
   const rel = path.relative(process.cwd(), found);
   const label = (rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : found).split(path.sep).join('/');
@@ -199,6 +305,8 @@ export class Bot {
     this.gateway = opts.gateway === false || typeof globalThis.WebSocket !== 'function' ? null : (opts.gateway || 'wss://rt.yapper.website/bot');
     this.prefixes = opts.prefixes || ['/', '!'];
     this.log = opts.log !== false;
+    /** How long to wait before acking a slash command nothing answered (ms). 0: at once. false: never. */
+    this.autoAckMs = opts.autoAckMs === false ? false : Number.isFinite(opts.autoAckMs) ? Math.max(0, opts.autoAckMs) : 10_000;
     // Most seconds one call spends waiting out 429s / "busy" 503s in total before it throws (err.retryAfter says how
     // long was left). Three 10 s waits with 50% jitter used to hold an edit for up to 45 s.
     this.maxRetryWait = Number.isFinite(opts.maxRetryWait) ? Math.max(0, opts.maxRetryWait) : 30;
@@ -227,7 +335,8 @@ export class Bot {
    * Listen for an event: "message", "command", "dm_message", "member_join", "member_leave", "reaction_add", "reaction_remove",
    * "voice_join", "voice_leave", "invite_create", "invite_delete", "interaction", "channel_create", "channel_update",
    * "channel_delete", "thread_create", "thread_update", "thread_delete", "category_create", "category_update",
-   * "category_delete", "test", "ready", "error".
+   * "category_delete", "message_update", "message_delete", "message_delete_bulk", "server_add", "server_remove",
+   * "test", "ready", "error".
    * Channel, thread and category events are in testing (flag bot_api_round2): their data is the channel object.
    * member_join also has invite_code and inviter_id when known (bots with Manage Server).
    * dm_message is someone DMing the bot: a message with msg.reply / msg.say that answer in the DM, and msg.dm = true.
@@ -247,33 +356,41 @@ export class Bot {
    */
   onReactionOnMine(fn) { const w = mineOnly(this, fn); return this.on('reaction_add', w).on('reaction_remove', w); }
 
-  /** Register a command. People type /name or !name; the composer suggests it. */
-  command(name, description, fn) { return this.#addCommand(name, description, fn, null, null); }
+  /**
+   * Register a command. People type /name or !name; the composer suggests it.
+   * opts.options (in testing, flag bot_command_options): what it takes, in the order people type it:
+   *   bot.command('ban', 'Ban someone', (msg) => msg.reply(`bye <@${msg.options.user}>`),
+   *     { options: [{ name: 'user', type: 'user', required: true }, { name: 'reason', description: 'Why' }] });
+   * Types: string (default), integer, number, boolean, user, channel, role; choices: ['a', 'b'] or [{ name, value }].
+   * The app shows people how to fill it in, and msg.options has the values by name. A wrong or missing value is
+   * answered for you with how to use the command, and your function isn't called.
+   */
+  command(name, description, fn, opts) {
+    if (typeof description === 'function') { opts = fn; fn = description; description = ''; }
+    return this.#addCommand(name, description, fn, null, null, opts);
+  }
 
-  #addCommand(name, description, fn, owner, check, options = {}) {
+  #addCommand(name, description, fn, owner, check, opts) {
     if (typeof description === 'function') { fn = description; description = ''; }
-
     const n = String(name).toLowerCase().replace(/^[/!]/, '');
     if (!/^[a-z0-9_-]{1,32}$/.test(n)) throw new Error(`Bad command name "${name}": letters, numbers, - and _ only`);
     if (typeof fn !== 'function') throw new Error(`Command /${n} needs a function to run`);
-
     const old = this.commands.get(n);
+    // Same name twice in the main file just replaces it (as it always did). Across cogs that's a mistake: say where.
     if (old && old.owner !== owner && (old.owner || owner)) {
       const where = (o) => (o ? o.label : 'your main file');
       throw new Error(`Command /${n} is in both ${where(old.owner)} and ${where(owner)}. Rename one of them.`);
     }
-
     if (!old && this.commands.size >= COMMAND_LIMIT) throw new Error(`Up to ${COMMAND_LIMIT} commands per bot, /${n} is one too many`);
-
-    this.commands.set(n, {
-      description: String(description || '').slice(0, 100),
-      fn,
-      owner,
-      check,
-      dmOnly: options.dmOnly ?? false,
-      serverOnly: options.serverOnly ?? false
-    });
-
+    const options = Array.isArray(opts?.options) ? opts.options.map((o) => ({ ...o, name: String(o?.name ?? '').toLowerCase() })) : [];
+    let optional = false;
+    for (const o of options) {
+      if (!/^[a-z0-9_-]{1,32}$/.test(o.name) || ['__proto__', 'constructor', 'prototype'].includes(o.name)) throw new Error(`Command /${n}: bad option name "${o.name}" (letters, numbers, - and _ only)`);
+      if (o.required && optional) throw new Error(`Command /${n}: required option "${o.name}" has to come before the optional ones`);
+      if (!o.required) optional = true;
+    }
+    if (options.length > 10) throw new Error(`Command /${n}: up to 10 options`);
+    this.commands.set(n, { description: String(description || '').slice(0, 100), fn, owner, check, options });
     if (owner) owner.cmds.add(n);
     this.#syncSoon();
     return this;
@@ -289,13 +406,13 @@ export class Bot {
   /**
    * Handle picks in your select menus with this custom_id (string or RegExp). `i.values` is the list of picked values.
    * Answer like a click: i.reply / i.ephemeral / i.update / i.ack, or open a form with i.showModal(modal).
-   * `bot.onSelect('food', (i) => i.ephemeral(`You picked ${i.values.join(', ')}`))`. In testing (flag bot_selects).
+   * `bot.onSelect('food', (i) => i.ephemeral(`You picked ${i.values.join(', ')}`))`.
    */
   onSelect(customId, fn) { this.buttons.push({ match: customId, fn, owner: null, kind: 'select' }); return this; }
   /**
    * Handle your modals being sent back, by the modal's custom_id (string or RegExp). `i.values` maps each input's
    * custom_id to its answer: text for a text box, a list for a select menu. Answer with i.reply / i.ephemeral / i.ack
-   * (or i.update when the modal came from a click). In testing (flag bot_modals).
+   * (or i.update when the modal came from a click).
    */
   onModal(customId, fn) { this.buttons.push({ match: customId, fn, owner: null, kind: 'modal_submit' }); return this; }
 
@@ -309,34 +426,17 @@ export class Bot {
    */
   load(file) { return this.#track(this.#loadFile(file, 0)); }
 
-  /**
- * Load every .js / .mjs / .ts / .mts file in a folder, A to Z.
- * Files starting with _ or . are skipped (handy for helpers).
- * Returns the names.
- */
+  /** Load every .js / .mjs file in a folder, A to Z. Files starting with _ are skipped (handy for helpers). Returns the names. */
   loadCogs(dir = './cogs') {
     return this.#track((async () => {
       const { abs } = await locate(dir);
-      const [fs, path] = await Promise.all([
-        import('node:fs/promises'),
-        import('node:path')
-      ]);
-
+      const [fs, path] = await Promise.all([import('node:fs/promises'), import('node:path')]);
       const files = (await fs.readdir(abs, { withFileTypes: true }))
-        .filter((d) =>
-          d.isFile() &&
-          /\.(?:m?js|m?ts)$/i.test(d.name) &&
-          !/^[_.]/.test(d.name)
-        )
-        .map((d) => d.name)
-        .sort();
-
+        .filter((d) => d.isFile() && /\.m?js$/i.test(d.name) && !/^[_.]/.test(d.name))
+        .map((d) => d.name).sort();
       const names = [];
-      for (const f of files) {
-        names.push(await this.#loadFile(path.join(abs, f), 0));
-      }
-
-      return names
+      for (const f of files) names.push(await this.#loadFile(path.join(abs, f), 0));
+      return names;
     })());
   }
 
@@ -391,9 +491,7 @@ export class Bot {
 
   #findCog(name) {
     const key = String(name ?? '');
-    const owner = this.cogs.get(key) || this.cogs.get(
-      key.replace(/^.*[\\/]/, '').replace(/\.(?:m?js|m?ts)$/i, '')
-    );
+    const owner = this.cogs.get(key) || this.cogs.get(key.replace(/^.*[\\/]/, '').replace(/\.m?js$/i, ''));
     if (!owner) throw new Error(`No cog called "${key}" is loaded${this.cogs.size ? ` (loaded: ${[...this.cogs.keys()].join(', ')})` : ''}`);
     return owner;
   }
@@ -404,7 +502,7 @@ export class Bot {
 
   async #loadFile(file, version) {
     const { abs, url, label } = await locate(file);
-    const name = label.replace(/^.*\//, '').replace(/\.(?:m?js|m?ts)$/i, '');
+    const name = label.replace(/^.*\//, '').replace(/\.m?js$/i, '');
     if (this.cogs.has(name)) throw new Error(`A cog called "${name}" is already loaded (${this.cogs.get(name).label}). To load it again: bot.reload('${name}')`);
     const owner = this.#owner(name, abs);
     owner.label = label;
@@ -441,17 +539,7 @@ export class Bot {
     for (const [n, c] of Object.entries(cog.commands || {})) {
       const run = typeof c === 'function' ? c : c?.run;
       if (typeof run !== 'function') throw new Error(`command "${n}" needs a run function: { description: '…', run: (msg) => … }`);
-      this.#addCommand(
-        n,
-        typeof c === 'function' ? '' : c.description,
-        tagged(owner, run, cog, `/${n}`),
-        owner,
-        check,
-        {
-          dmOnly: typeof c === 'function' ? false : c.dmOnly,
-          serverOnly: typeof c === 'function' ? false : c.serverOnly
-        }
-      );
+      this.#addCommand(n, typeof c === 'function' ? '' : c.description, tagged(owner, run, cog, `/${n}`), owner, check);
     }
     for (const [prefix, fn] of Object.entries(cog.buttons || {})) {
       if (typeof fn !== 'function') throw new Error(`button "${prefix}" needs a function`);
@@ -479,9 +567,9 @@ export class Bot {
     const bot = this;
     let proxy;
     const own = {
-      command(name, description, fn) {
-        if (typeof description === 'function') { fn = description; description = ''; }
-        bot.#addCommand(name, description, typeof fn === 'function' ? tagged(owner, fn, undefined, `/${String(name).replace(/^[/!]/, '')}`) : fn, owner, owner.check);
+      command(name, description, fn, opts) {
+        if (typeof description === 'function') { opts = fn; fn = description; description = ''; }
+        bot.#addCommand(name, description, typeof fn === 'function' ? tagged(owner, fn, undefined, `/${String(name).replace(/^[/!]/, '')}`) : fn, owner, owner.check, opts);
         return proxy;
       },
       on(event, fn) {
@@ -523,7 +611,22 @@ export class Bot {
     owner.evs = [];
   }
 
-  #commandList() { return [...this.commands].map(([name, c]) => ({ name, description: c.description })); }
+  #commandList() {
+    return [...this.commands].map(([name, c]) => (c.options?.length
+      ? { name, description: c.description, options: c.options.map((o) => ({ name: o.name, description: o.description, type: o.type, required: !!o.required, ...(o.choices ? { choices: o.choices } : {}) })) }
+      : { name, description: c.description }));
+  }
+
+  /** msg.options from the command's options and the typed text. False (after telling the person) when it doesn't fit. */
+  async #fillOptions(name, c, msg) {
+    msg.options = {};
+    if (!c.options?.length) return true;
+    const got = parseOptions(c.options, msg.args);
+    if (got.values) { msg.options = got.values; return true; }
+    const text = `${got.error}. Use it like this: \`${commandUsage(name, c.options)}\``;
+    try { await (typeof msg.ephemeral === 'function' ? msg.ephemeral(text) : msg.reply(text)); } catch (e) { await this.fail(e); }
+    return false;
+  }
 
   /** Commands changed after start(): send the new list to Yapin’ once things settle (a second later). */
   #syncSoon() {
@@ -550,7 +653,7 @@ export class Bot {
     let waited = 0;
     let gatewayRetried = false;
     for (let attempt = 0; ; attempt++) {
-      // Over the gateway socket when it says so (flag bot_gateway_requests): no new HTTPS request per call. Files and
+      // Over the gateway socket when it says so: no new HTTPS request per call. Files and
       // the event feed always go over HTTPS. A socket that drops before answering: a GET is asked again over HTTPS,
       // anything else throws (it may have gone through), like a network error would.
       let status, out, isJson, retryHeader;
@@ -595,12 +698,15 @@ export class Bot {
         status = res.status;
         retryHeader = Number(res.headers.get('retry-after')) || 0;
       }
-      if (status >= 200 && status < 300) return out;
+      // The API echoes a nonce it recorded: from then on a send can be repeated safely.
+      if (status >= 200 && status < 300) { if (out?.nonce && SEND_PATH.test(path)) this._nonceOk = true; return out; }
       // A 502/503/504 from the proxy in front of us (a release swapping copies, a restart): asked once more after 2 s.
       // A 503 means nothing was done, so any call is safe to repeat; a 502/504 may have gone through, so only calls
       // that are safe to repeat (GET, PUT, DELETE) are.
       const ours503 = status === 503 && typeof out.retry_after === 'number';
-      const again = status === 503 || ((status === 502 || status === 504) && (method === 'GET' || method === 'PUT' || method === 'DELETE'));
+      // A send with a nonce the API is known to record is safe to repeat too: the same nonce never posts twice.
+      const safePost = method === 'POST' && SEND_PATH.test(path) && this._nonceOk && !!body?.nonce && !isForm(body);
+      const again = status === 503 || ((status === 502 || status === 504) && (method === 'GET' || method === 'PUT' || method === 'DELETE' || safePost));
       if (again && !ours503 && !gatewayRetried && attempt < retries) {
         gatewayRetried = true;
         if (this.log) console.warn(`[yapper] ${method} ${path} answered ${status}, trying once more in 2s`);
@@ -625,6 +731,9 @@ export class Bot {
       }
       const err = new Error(out.error || `${method} ${path} failed (${status})`);
       err.status = status;
+      // What kind of error, for code to branch on: 'missing_permission', 'not_found', 'rate_limited' …
+      if (out.code) err.code = out.code;
+      if (out.permission) err.permission = out.permission;
       if (wait) err.retryAfter = wait;
       throw err;
     }
@@ -634,16 +743,19 @@ export class Bot {
    * Send a message to a channel. Returns the message.
    * `opts.embeds`: up to 5 cards (plain objects or `new Embed()`), content can be '' then. `opts.replyTo`: a message id.
    * `opts.components`: up to 5 rows of up to 5 buttons (`new Row(Button.primary('Go', 'go'))`).
-   * `opts.files` (in testing, flag bot_uploads): up to 4 files, each a file path (Node), a Blob/File, or
+   * `opts.files`: up to 4 files, each a file path (Node), a Blob/File, or
    * `{ name: 'card.png', data: bytes }`. Pictures, videos, sounds, TXT, PDF, ZIP, 10 MB each, 12 MB in all. Every file becomes its own
    * message (the first one has the text) and is checked before it shows; content can be '' then. Returns the first message.
    * `bot.send(ch, 'Welcome!', { files: [{ name: 'welcome.png', data: png }] })`
-   * `opts.stickerId` (in testing, flag stickers): one of the server's stickers as the whole message; content stays ''.
+   * `opts.stickerId`: one of the server's stickers as the whole message; content stays ''.
    * @see https://www.yapin.gg/developers/api/messages#post-channels-id-messages
    */
   send(channelId, content, opts = {}) {
     const body = { content: String(content ?? ''), reply_to: opts.replyTo, embeds: list(opts.embeds || undefined), components: list(opts.components || undefined), sticker_id: opts.stickerId };
     const files = opts.files == null ? [] : [].concat(opts.files);
+    // A fresh id per send (or opts.nonce): when the API records it, a send that got a 502 is
+    // retried and can't post twice. Not with files: each file is its own message.
+    if (!files.length) body.nonce = opts.nonce || newNonce();
     const sending = files.length ? this.#withFiles(body, files) : Promise.resolve(body);
     return this.#soft(sending.then((b) => this.api('POST', `/channels/${channelId}/messages`, b)).then((out) => out.message));
   }
@@ -715,7 +827,7 @@ export class Bot {
   /** The bot's banner, same inputs as setAvatar. @see https://www.yapin.gg/developers/api/bot#put-me-banner */
   async setBanner(image, type) { return this.#upload('/me/banner', image, type); }
   /** Online status and what the bot is "playing": setStatus('dnd', 'Moderating'). Status: online, idle, dnd. @see https://www.yapin.gg/developers/api/bot#put-me-status */
-  async setStatus(status = 'online', activity = '') {
+  async setStatus(status = 'online', activity = null) {
     const out = await this.api('PUT', '/me/status', { status, activity });
     // Connected to the gateway: tell it too, so the dot and activity change there at once.
     try { if (this._ws?.readyState === 1) this._ws.send(JSON.stringify({ op: 'presence', status, activity })); } catch { /* closed */ }
@@ -740,19 +852,59 @@ export class Bot {
    * 'ephemeral' (only the clicker sees it), 'update' (edit the clicked message), 'ack' (just "got it") or 'modal'
    * (open a form: `{ modal: new Modal(...) }`, only as the first answer). The `i` helpers call this for you.
    * `layout`: a Components V2 layout instead of content/embeds/components (reply and update only).
-   * @see https://www.yapin.gg/developers/api/interactions#post-interactions-id-token-callback
    */
+  /**
+   * Interactions this bot has sent an answer for (the last 500), so a command nobody answered can be acked for it.
+   * Marked when the answer is sent (so an answer that isn't awaited counts too), taken back if that answer was refused
+   * and no other went through.
+   */
+  #answeredIds = new Set();
+  #okIds = new Set();
+  #answered(id) {
+    this.#answeredIds.add(id);
+    if (this.#answeredIds.size > 500) this.#answeredIds.delete(this.#answeredIds.values().next().value);
+  }
+  #settled(id, ok) {
+    if (ok) {
+      this.#okIds.add(id);
+      if (this.#okIds.size > 500) this.#okIds.delete(this.#okIds.values().next().value);
+    } else if (!this.#okIds.has(id)) this.#answeredIds.delete(id);
+  }
+  /**
+   * A slash command whose handler didn't answer through the interaction (it used bot.send, sent files, a check said
+   * no, or it threw): tell Yapin' it was handled, so the person doesn't get "the bot didn't answer".
+   * After an error they get a short note only they see, right away. Otherwise the ack waits autoAckMs (10 seconds,
+   * `new Bot(token, { autoAckMs })`; 0 = at once, false = never) and is only sent if still nothing answered, so a
+   * handler that replies or opens a form a moment after returning still can. Never throws.
+   */
+  async #autoAck(data, failed) {
+    if (!data?.id || !data.token || this.autoAckMs === false || this.#answeredIds.has(data.id)) return;
+    const ack = async () => {
+      if (this.#answeredIds.has(data.id)) return;
+      try { await this.respond(data, 'ack'); } catch { /* expired, or answered another way */ }
+    };
+    if (failed) {
+      try { await this.respond(data, 'ephemeral', { content: `Something went wrong running /${data.command}` }); } catch { /* expired */ }
+    } else if (!(this.autoAckMs > 0)) await ack();
+    else setTimeout(ack, this.autoAckMs).unref?.();
+  }
+
+  /** @see https://www.yapin.gg/developers/api/interactions#post-interactions-id-token-callback */
   respond(interaction, type, { content, embeds, components, layout, modal } = {}) {
     if (!interaction || !interaction.id || !interaction.token) {
       return Promise.reject(new Error('Nothing to answer: this needs an interaction (a click, a pick, a modal or a command event)'));
     }
+    const iid = interaction.id;
+    this.#answered(iid);
     const body = { type };
     if (modal !== undefined) body.modal = plain(modal);
     if (content !== undefined) body.content = content === null ? null : String(content);
     if (embeds !== undefined) body.embeds = list(embeds);
     if (components !== undefined) body.components = list(components);
     if (layout !== undefined) { body.flags = IS_COMPONENTS_V2; body.components = list(layout); }
-    return this.#soft(this.api('POST', `/interactions/${interaction.id}/${interaction.token}/callback`, body));
+    const sent = this.#soft(this.api('POST', `/interactions/${iid}/${interaction.token}/callback`, body));
+    sent.then(() => this.#settled(iid, true), () => this.#settled(iid, false));
+    return sent;
   }
   /**
    * One message by id, with its `author` profile, like send() and edit() return a message.
@@ -775,6 +927,16 @@ export class Bot {
   react(channelId, messageId, emoji) { return this.#soft(this.api('PUT', `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`)); }
   /** @see https://www.yapin.gg/developers/api/messages#delete-channels-id-messages-mid-reactions-emoji */
   async unreact(channelId, messageId, emoji) { return this.api('DELETE', `/channels/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`); }
+  /**
+   * Remove other people's reactions (needs Manage Messages). No options: every reaction on the
+   * message. { emoji }: everyone's of that emoji. { emoji, userId }: that person's. Up to 100 per call: `more` says
+   * call again. Not on messages with reaction roles, a giveaway or a suggestion vote.
+   */
+  async removeReactions(channelId, messageId, { emoji, userId } = {}) {
+    const base = `/channels/${channelId}/messages/${messageId}/reactions`;
+    if (!emoji) return this.api('DELETE', base);
+    return this.api('DELETE', `${base}/${encodeURIComponent(emoji)}?${userId ? `user_id=${encodeURIComponent(userId)}` : 'all=true'}`);
+  }
   /** @see https://www.yapin.gg/developers/api/messages#get-channels-id-messages-mid-reactions */
   async reactions(channelId, messageId) { return (await this.api('GET', `/channels/${channelId}/messages/${messageId}/reactions`)).reactions; }
 
@@ -828,7 +990,7 @@ export class Bot {
     const path = channelId ? `/channels/${channelId}/permissions/${userId}` : `/servers/${serverId}/members/${userId}/permissions`;
     return (await this.api('GET', path)).permissions;
   }
-  // ---- custom emojis (Manage Emoji; 30 changes a minute per bot; in testing, flag bot_emojis) ----
+  // ---- custom emojis (Manage Emoji; 30 changes a minute per bot) ----
   /** The server's custom emojis: { emojis: [{ id, name, animated, url, … }], limit } (limit = emoji slots). @see https://www.yapin.gg/developers/api/emojis#get-servers-id-emojis */
   async emojis(serverId) { return this.api('GET', `/servers/${serverId}/emojis`); }
   /**
@@ -853,7 +1015,7 @@ export class Bot {
   async deleteEmoji(serverId, emojiId) { return this.api('DELETE', `/servers/${serverId}/emojis/${emojiId}`); }
   /**
    * The custom emojis in one message (text, embeds, buttons, reactions), from any server: [{ id, name, animated, url,
-   * in_server, text }]. For steal emoji commands. Read Message History; in testing (flag bot_emoji_lookup).
+   * in_server, text }]. For steal emoji commands. Needs Read Message History.
    * @see https://www.yapin.gg/developers/api/emojis#get-channels-id-messages-mid-emojis
    */
   async messageEmojis(channelId, messageId) { return (await this.api('GET', `/channels/${channelId}/messages/${messageId}/emojis`)).emojis; }
@@ -997,7 +1159,7 @@ export class Bot {
   }
 
   // ---- channels ----
-  // ---- webhooks (flag bot_webhooks; the bot needs Manage Webhooks in that channel) ----
+  // ---- webhooks (the bot needs Manage Webhooks in that channel) ----
   /**
    * Make a webhook in a text channel and post through it with a different name and picture per message
    * (PluralKit style): `const hook = await bot.createWebhook(ch, 'Proxy');
@@ -1041,20 +1203,44 @@ export class Bot {
   }
 
   /** @see https://www.yapin.gg/developers/api/channels#post-servers-id-channels */
-  async createChannel(serverId, name, { kind = 'text', categoryId } = {}) { return (await this.api('POST', `/servers/${serverId}/channels`, { name, kind, category_id: categoryId })).channel; }
+  async createChannel(serverId, name, { kind = 'text', categoryId, private: priv, roleIds, userIds } = {}) { return (await this.api('POST', `/servers/${serverId}/channels`, { name, kind, category_id: categoryId, private: priv, role_ids: roleIds, user_ids: userIds })).channel; }
   /** Change a channel: { name, categoryId, private, roleIds, readOnly, postRoleIds, slowmode }. @see https://www.yapin.gg/developers/api/channels#patch-channels-id */
   async editChannel(channelId, changes = {}) {
-    const { name, categoryId, private: priv, roleIds, readOnly, postRoleIds, slowmode } = changes;
-    return (await this.api('PATCH', `/channels/${channelId}`, { name, category_id: categoryId, private: priv, role_ids: roleIds, read_only: readOnly, post_role_ids: postRoleIds, slowmode })).channel;
+    const { name, categoryId, private: priv, roleIds, userIds, readOnly, postRoleIds, slowmode } = changes;
+    return (await this.api('PATCH', `/channels/${channelId}`, { name, category_id: categoryId, private: priv, role_ids: roleIds, user_ids: userIds, read_only: readOnly, post_role_ids: postRoleIds, slowmode })).channel;
   }
   /** @see https://www.yapin.gg/developers/api/channels#delete-channels-id */
   async deleteChannel(channelId) { return this.api('DELETE', `/channels/${channelId}`); }
+  /**
+   * Threads in a text channel, most recently active first.
+   */
+  async threads(channelId, { limit } = {}) { return (await this.api('GET', `/channels/${channelId}/threads${limit ? `?limit=${limit}` : ''}`)).threads; }
+  /**
+   * Start a thread in a text channel (needs Create Threads). content is its first message;
+   * messageId starts it from that message. Returns { thread, message }: send more with bot.send(thread.id, …).
+   * @see https://www.yapin.gg/developers/api/channels#post-channels-id-threads
+   */
+  async createThread(channelId, name, { content, messageId, embeds, components } = {}) {
+    const body = { name };
+    if (content !== undefined) body.content = content;
+    if (messageId) body.message_id = messageId;
+    if (embeds !== undefined) body.embeds = list(embeds);
+    if (components !== undefined) body.components = list(components);
+    return this.api('POST', `/channels/${channelId}/threads`, body);
+  }
+  /**
+   * Rename, lock or archive a thread: { name, locked, archived }.
+   * @see https://www.yapin.gg/developers/api/channels#patch-threads-id
+   */
+  async editThread(threadId, changes = {}) { return this.api('PATCH', `/threads/${threadId}`, changes); }
+  /** @see https://www.yapin.gg/developers/api/channels#delete-threads-id */
+  async deleteThread(threadId) { return this.api('DELETE', `/threads/${threadId}`); }
   /** @see https://www.yapin.gg/developers/api/channels#post-servers-id-categories */
   async createCategory(serverId, name) { return (await this.api('POST', `/servers/${serverId}/categories`, { name })).category; }
   /** @see https://www.yapin.gg/developers/api/channels#delete-servers-id-categories-cid */
   async deleteCategory(serverId, categoryId) { return this.api('DELETE', `/servers/${serverId}/categories/${categoryId}`); }
 
-  // ---- events (in testing) ----
+  // ---- scheduled server events ----
   /** Upcoming and live events of a server. @see https://www.yapin.gg/developers/api/scheduled-events#get-servers-id-events */
   async events(serverId) { return (await this.api('GET', `/servers/${serverId}/events`)).events; }
   /** Make an event: { title, startsAt (Date or ISO), endsAt, channelId (voice) or location, announceChannelId, repeat: 'none'|'weekly', tz, description }. Manage Events. @see https://www.yapin.gg/developers/api/scheduled-events#post-servers-id-events */
@@ -1271,52 +1457,7 @@ export class Bot {
     this._syncTimer = null;
   }
 
-  canRunInContext(c, msg) {
-    const dmOnly = c.dmOnly === true;
-    const serverOnly = c.serverOnly === true;
-
-    if (dmOnly && serverOnly) return false;
-    if (dmOnly && !msg.dm && !msg.is_dm) return false;
-    if (serverOnly && (msg.dm || msg.is_dm)) return false;
-
-    return true;
-  }
-
-  runCommand(c, msg) {
-    if (!this.canRunInContext(c, msg)) return Promise.resolve(false);
-
-    const run = () => {
-      let result;
-
-      try {
-        result = c.fn(msg);
-      } catch (e) {
-        return Promise.resolve(this.fail(e));
-      }
-
-      return Promise.resolve(result)
-        .catch(e => this.fail(e))
-        .then(() => this.emit('command', msg))
-        .then(() => true);
-    };
-
-    if (!c.check) return run();
-
-    let check;
-
-    try {
-      check = c.check(msg);
-    } catch (e) {
-      return Promise.resolve(this.fail(e)).then(() => false);
-    }
-
-    return Promise.resolve(check)
-      .then(ok => ok !== false ? run() : false)
-      .catch(e => Promise.resolve(this.fail(e)).then(() => false));
-  }
-
   async handle(ev) {
-    let dm = false;
     const data = ev.data || {};
     if (ev.type === 'message') {
       // Messages from bots and webhooks (author_bot): skipped unless the bot asked for them (ignoreBots: false).
@@ -1460,7 +1601,10 @@ export class Bot {
       ...data,
       /** A new message in the channel. */
       reply(content, opts = {}) { return bot.respond(data, 'reply', { content, ...opts }); },
-      /** A message only the person who clicked sees. Text and embeds, no buttons. */
+      /**
+       * A message only the person who clicked sees. opts.components takes rows of
+       * buttons. A click on one arrives with i.reply_id, and i.update(...) then changes that ephemeral reply in place.
+       */
       ephemeral(content, opts = {}) { return bot.respond(data, 'ephemeral', { content, ...opts }); },
       /**
        * Change the message the button is on: { content, embeds, components } (left out = kept, null = removed).
@@ -1469,7 +1613,7 @@ export class Bot {
       update(changes = {}) { return bot.respond(data, 'update', changes); },
       /** Just say "got it", so the person doesn't see an error. */
       ack() { return bot.respond(data, 'ack'); },
-      /** Open a form for the person (a Modal). Only as the first answer, not to a modal_submit. Flag bot_modals. */
+      /** Open a form for the person (a Modal). Only as the first answer, not to a modal_submit. */
       showModal(modal) { return bot.respond(data, 'modal', { modal }); },
       /** <@id> for the person who clicked. */
       get userMention() { return `<@${data.user_id}>`; },
@@ -1502,7 +1646,7 @@ export class Bot {
       ephemeral(content, opts = {}) { return answer('ephemeral', content, opts); },
       /** Just "got it", no message. */
       ack() { return bot.respond(data, 'ack'); },
-      /** Open a form for the person who used it (a Modal, flag bot_modals). Only as the first answer; it comes back to onModal. */
+      /** Open a form for the person who used it (a Modal). Only as the first answer; it comes back to onModal. */
       showModal(modal) { return bot.respond(data, 'modal', { modal }); },
       /** <@id> for the person who used it. */
       get authorMention() { return `<@${data.user_id}>`; },
@@ -1608,7 +1752,6 @@ export class Button {
 /**
  * A select menu (dropdown), alone in its row: new Row(new Select('food').option('Pizza', 'pizza').option('Taco', 'taco')).
  * Picks come to onSelect with i.values. Up to 25 options; min/max picks default to 1. In a Modal give it a label.
- * In testing (flag bot_selects).
  */
 export class Select {
   constructor(customId, options = []) {
@@ -1662,7 +1805,7 @@ export class TextInput {
 /**
  * A form that pops up for the person: i.showModal(new Modal('apply', 'Apply', TextInput.paragraph('why', 'Why?'))).
  * Up to 5 inputs (TextInput or Select with a label). It comes back to onModal('apply', (i) => …) with i.values.
- * Only as the first answer to a click, a pick or a /command (msg.showModal). In testing (flag bot_modals).
+ * Only as the first answer to a click, a pick or a /command (msg.showModal).
  */
 export class Modal {
   constructor(customId, title, ...inputs) { this.customId = String(customId); this.title = String(title); this.inputs = inputs.flat(); }
