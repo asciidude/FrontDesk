@@ -370,27 +370,30 @@ export class Bot {
     return this.#addCommand(name, description, fn, null, null, opts);
   }
 
-  #addCommand(name, description, fn, owner, check, opts) {
+  #addCommand(name, description, fn, owner, check, options = {}) {
     if (typeof description === 'function') { fn = description; description = ''; }
+
     const n = String(name).toLowerCase().replace(/^[/!]/, '');
     if (!/^[a-z0-9_-]{1,32}$/.test(n)) throw new Error(`Bad command name "${name}": letters, numbers, - and _ only`);
     if (typeof fn !== 'function') throw new Error(`Command /${n} needs a function to run`);
+
     const old = this.commands.get(n);
-    // Same name twice in the main file just replaces it (as it always did). Across cogs that's a mistake: say where.
     if (old && old.owner !== owner && (old.owner || owner)) {
       const where = (o) => (o ? o.label : 'your main file');
       throw new Error(`Command /${n} is in both ${where(old.owner)} and ${where(owner)}. Rename one of them.`);
     }
+
     if (!old && this.commands.size >= COMMAND_LIMIT) throw new Error(`Up to ${COMMAND_LIMIT} commands per bot, /${n} is one too many`);
-    const options = Array.isArray(opts?.options) ? opts.options.map((o) => ({ ...o, name: String(o?.name ?? '').toLowerCase() })) : [];
-    let optional = false;
-    for (const o of options) {
-      if (!/^[a-z0-9_-]{1,32}$/.test(o.name) || ['__proto__', 'constructor', 'prototype'].includes(o.name)) throw new Error(`Command /${n}: bad option name "${o.name}" (letters, numbers, - and _ only)`);
-      if (o.required && optional) throw new Error(`Command /${n}: required option "${o.name}" has to come before the optional ones`);
-      if (!o.required) optional = true;
-    }
-    if (options.length > 10) throw new Error(`Command /${n}: up to 10 options`);
-    this.commands.set(n, { description: String(description || '').slice(0, 100), fn, owner, check, options });
+
+    this.commands.set(n, {
+      description: String(description || '').slice(0, 100),
+      fn,
+      owner,
+      check,
+      dmOnly: options.dmOnly ?? false,
+      serverOnly: options.serverOnly ?? false
+    });
+
     if (owner) owner.cmds.add(n);
     this.#syncSoon();
     return this;
@@ -539,7 +542,17 @@ export class Bot {
     for (const [n, c] of Object.entries(cog.commands || {})) {
       const run = typeof c === 'function' ? c : c?.run;
       if (typeof run !== 'function') throw new Error(`command "${n}" needs a run function: { description: '…', run: (msg) => … }`);
-      this.#addCommand(n, typeof c === 'function' ? '' : c.description, tagged(owner, run, cog, `/${n}`), owner, check);
+      this.#addCommand(
+        n,
+        typeof c === 'function' ? '' : c.description,
+        tagged(owner, run, cog, `/${n}`),
+        owner,
+        check,
+        {
+          dmOnly: typeof c === 'function' ? false : c.dmOnly,
+          serverOnly: typeof c === 'function' ? false : c.serverOnly
+        }
+      );
     }
     for (const [prefix, fn] of Object.entries(cog.buttons || {})) {
       if (typeof fn !== 'function') throw new Error(`button "${prefix}" needs a function`);
@@ -1459,6 +1472,10 @@ export class Bot {
 
   async handle(ev) {
     const data = ev.data || {};
+
+    let sname = data.command;
+    const sc = this.commands.get(sname);
+    console.log(sc);
     if (ev.type === 'message') {
       // Messages from bots and webhooks (author_bot): skipped unless the bot asked for them (ignoreBots: false).
       if (this.ignoreBots && data.author_bot) return;
