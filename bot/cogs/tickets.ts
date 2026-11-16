@@ -360,6 +360,8 @@ export class Utils extends Cog {
                         && i.custom_id.startsWith('tickets:'),
                     { duration: 300000 },
                     async (i:any) => {
+                        i.ack();
+
                         if(pages.length === 0)
                             return;
 
@@ -378,7 +380,7 @@ export class Utils extends Cog {
                                 embeds: [createEmbed(currentPage)],
                                 components: createComponents(currentPage)
                             }
-                        )
+                        );
                     }
                 );
             }
