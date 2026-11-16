@@ -1472,10 +1472,6 @@ export class Bot {
 
   async handle(ev) {
     const data = ev.data || {};
-
-    let sname = data.command;
-    const sc = this.commands.get(sname);
-    console.log(sc);
     if (ev.type === 'message') {
       // Messages from bots and webhooks (author_bot): skipped unless the bot asked for them (ignoreBots: false).
       if (this.ignoreBots && data.author_bot) return;
