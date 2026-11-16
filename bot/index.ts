@@ -166,7 +166,7 @@ bot.on('ready', async () => {
                 console.error(e);
             }
         }
-    }, 5000);
+    }, 3000);
 });
 
 // TODO (whenever it's added)
