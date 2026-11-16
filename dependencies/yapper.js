@@ -275,7 +275,7 @@ async function locate(target) {
     tries = [...new Set([main && path.resolve(main, raw), path.resolve(process.cwd(), raw)].filter(Boolean))];
   }
   // 'cogs/fun' works too: try .js and .mjs.
-  const found = tries.flatMap((p) => (/\.m?js$/i.test(p) ? [p] : [p, `${p}.js`, `${p}.mjs`])).find((p) => fs.existsSync(p));
+  const found = tries.flatMap((p) => (/\.m?js$/i.test(p) ? [p] : [p, `${p}.js`, `${p}.mjs`, `${p}.ts`, `${p}.mts`])).find((p) => fs.existsSync(p));
   if (!found) throw new Error(`Can't find ${raw} (looked at ${tries.join(' and ')})`);
   const rel = path.relative(process.cwd(), found);
   const label = (rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? rel : found).split(path.sep).join('/');
@@ -432,7 +432,7 @@ export class Bot {
       const { abs } = await locate(dir);
       const [fs, path] = await Promise.all([import('node:fs/promises'), import('node:path')]);
       const files = (await fs.readdir(abs, { withFileTypes: true }))
-        .filter((d) => d.isFile() && /\.m?js$/i.test(d.name) && !/^[_.]/.test(d.name))
+        .filter((d) => d.isFile() && /\.m?[tj]s$/i.test(d.name) && !/^[_.]/.test(d.name))
         .map((d) => d.name).sort();
       const names = [];
       for (const f of files) names.push(await this.#loadFile(path.join(abs, f), 0));
