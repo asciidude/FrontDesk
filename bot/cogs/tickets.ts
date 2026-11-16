@@ -1,4 +1,4 @@
-import { Button, Cog, Embed, Row } from '../../dependencies/yapper.js';
+import { Button, Cog, Embed, Row } from '../../dependencies/yapper';
 import { InteractionCollector } from '../../utils/InteractionCollector.js';
 import { isAdminOrSupport } from '../../utils/isAdminOrSupport.js';
 import { paginateFields, type EmbedField } from '../../utils/pagintateFields.js';

@@ -1,5 +1,5 @@
 import { activeSetups, db, messageSwitchboard } from '..';
-import { Button, Cog, Embed, Row } from '../../dependencies/yapper.js';
+import { Button, Cog, Embed, Row } from '../../dependencies/yapper';
 import { checkPermissions } from '../../utils/checkPermissions';
 import { MessageCollector } from '../../utils/MessageCollector';
 
