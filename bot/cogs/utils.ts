@@ -603,10 +603,7 @@ export class Utils extends Cog {
         if (!await checkPermissions(
             this.bot, msg.server_id,
             ['manage_channels', 'manage_messages', 'embed_links', 'manage_server', 'mention_everyone'],
-            {
-                authorId: null,
-                bot: true
-            }
+            { bot: true }
         )) {
             msg.reply('**I do not have the proper permissions to work on this server!**\nPlease allow me the following:\n* Manage channels\n* Manage messages\n* Embed links\n* Mention everyone\n* Manage servers');
             return false;
