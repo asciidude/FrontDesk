@@ -13,8 +13,8 @@ export const checkPermissions = async (
     serverId: string,
     permissions: string[],
     user: {
-        authorId: string | null,
-        bot: boolean | null
+        authorId?: string,
+        bot?: boolean
     },
     exactMatch: boolean = true
 ) => {
