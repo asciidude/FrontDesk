@@ -1,5 +1,6 @@
 import { activeSetups, db, messageSwitchboard } from '..';
 import { Button, Cog, Embed, Row } from '../../dependencies/yapper';
+import { checkPanelParts } from '../../utils/checkPanelParts';
 import { checkPermissions } from '../../utils/checkPermissions';
 import { MessageCollector } from '../../utils/MessageCollector';
 
@@ -394,37 +395,9 @@ export class Utils extends Cog {
                         const response = await collectResponse((m: any) => isAuthor(m), options);
                         const parts = response[0].content.split('\n').map((ln: string) => ln.trim());
 
-                        const [name, description, color, thumbnail] = parts;
-                        const errors: string[] = [];
-
-                        if (!name || !description) {
-                            errors.push('Panel name and description are required.')
-                        }
-
-                        if (name.length > 256) {
-                            errors.push('Panel name must be less than 256 characters.');
-                        }
-
-                        if (description.length > 4096) {
-                            // is this even possible in a normal chat?? xD
-                            errors.push('Panel description must be less than 4,096 characters.');
-                        }
-
-                        if (color && !/^#[0-9A-Fa-f]{6}$/.test(color)) {
-                            errors.push('Panel color is invalid, please use HEX format (e.g. #784FC9)');
-                        }
-
-                        if (thumbnail) {
-                            try {
-                                const url = new URL(thumbnail);
-
-                                if (!['http:', 'https:'].includes(url.protocol)) {
-                                    errors.push('Thumbnail must use HTTP or HTTPS.');
-                                }
-                            } catch {
-                                errors.push('Invalid thumbnail URL. Please provide a valid URL!');
-                            }
-                        }
+                        const {
+                            name, description, color, thumbnail, errors
+                        } = await checkPanelParts(parts);
 
                         if (errors.length === 0) {
                             const message = await this.bot.send(panelChannelId, '', {
