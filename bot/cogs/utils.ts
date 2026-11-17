@@ -400,21 +400,15 @@ export class Utils extends Cog {
                         } = await checkPanelParts(parts);
 
                         if (errors.length === 0) {
-                            const message = await this.bot.send(panelChannelId, '', {
-                                embeds: [
-                                    new Embed({
-                                        title: name,
-                                        description,
-                                        color: color,
-                                        image: thumbnail,
-                                        footer: {
-                                            text: 'FrontDesk by asciixd',
-                                            icon_url: process.env.ICON_URL
-                                        },
-                                        timestamp: new Date()
-                                    })
-                                ]
+                            const panelEmbed = new Embed({
+                                title: name,
+                                description,
+                                color: color,
+                                image: thumbnail,
+                                timestamp: new Date()
                             });
+
+                            const message = await this.bot.send(panelChannelId, '', { embeds: [ panelEmbed ] });
 
                             setupResources.messages.push({
                                 channelId: panelChannelId,
@@ -426,6 +420,7 @@ export class Utils extends Cog {
                                     'PATCH',
                                     `/channels/${panelChannelId}/messages/${message.id}`,
                                     {
+                                        embeds: [ panelEmbed.footer(`Panel ID: ${panelChannelId}`) ],
                                         components: [
                                             new Row(
                                                 Button.success(
