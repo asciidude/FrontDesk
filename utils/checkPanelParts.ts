@@ -1,4 +1,4 @@
-const checkPanelParts = async (parts:any) => {
+export const checkPanelParts = async (parts:any) => {
     const [name, description, color, thumbnail] = parts;
     const errors: string[] = [];
 
