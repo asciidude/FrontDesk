@@ -4,6 +4,7 @@ export const checkPanelParts = async (parts:any) => {
 
     if (!name || !description) {
         errors.push('Panel name and description are required.')
+        return { errors };
     }
 
     if (name.length > 256) {
