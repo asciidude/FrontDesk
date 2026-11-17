@@ -31,5 +31,8 @@ export const checkPanelParts = async (parts:any) => {
         }
     }
 
-    return errors;
+    return {
+        name, description, color, thumbnail,
+        errors
+    };
 }
