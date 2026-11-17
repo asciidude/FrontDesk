@@ -6,6 +6,8 @@ export const isAdminOrSupport = async(member: any, serverId: string, dm?: boolea
     error?: string,
     server?: any
 }> => {
+    if(dm) return {};
+    
     const serverDb: any = db.prepare(`
         SELECT *
         FROM servers
@@ -15,12 +17,6 @@ export const isAdminOrSupport = async(member: any, serverId: string, dm?: boolea
     if (!serverDb) {
         return {
             error: 'Server not found in our database. It may be improperly configured, try running `/setup` for guided setup.'
-        }
-    }
-
-    if(dm) {
-        return {
-            server: serverDb
         }
     }
 
