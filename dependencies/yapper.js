@@ -391,7 +391,9 @@ export class Bot {
       owner,
       check,
       dmOnly: options.dmOnly ?? false,
-      serverOnly: options.serverOnly ?? false
+      serverOnly: options.serverOnly ?? false,
+      class: options.class,
+      usage: options.usage
     });
 
     if (owner) owner.cmds.add(n);
@@ -550,7 +552,9 @@ export class Bot {
         check,
         {
           dmOnly: typeof c === 'function' ? false : c.dmOnly,
-          serverOnly: typeof c === 'function' ? false : c.serverOnly
+          serverOnly: typeof c === 'function' ? false : c.serverOnly,
+          class: typeof c === 'function' ? false : c.class,
+          usage: typeof c === 'function' ? false : c.usage
         }
       );
     }

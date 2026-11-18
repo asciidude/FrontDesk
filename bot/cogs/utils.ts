@@ -1,7 +1,8 @@
-import { activeSetups, db, messageSwitchboard } from '..';
+import { activeSetups, db, interactionSwitchboard, messageSwitchboard } from '..';
 import { Button, Cog, Embed, Row } from '../../dependencies/yapper';
 import { checkPanelParts } from '../../utils/checkPanelParts';
 import { checkPermissions } from '../../utils/checkPermissions';
+import { InteractionCollector } from '../../utils/InteractionCollector';
 import { MessageCollector } from '../../utils/MessageCollector';
 import { paginateFields, type EmbedField } from '../../utils/pagintateFields';
 import { processBatches } from '../../utils/processBatches';
@@ -28,6 +29,7 @@ export class Utils extends Cog {
             class: 'utility',
             usage: '/help',
             run: async (msg: any) => {
+                const userId = msg.author_id;
                 const reserved = {
                     title: 'FrontDesk Commands',
                     description: `Can't find what you're looking for? Join our [support server](${process.env.INVITE_URL}) for more help.`,
@@ -40,17 +42,93 @@ export class Utils extends Cog {
                 const commands = this.bot.commands;
                 const fields: EmbedField[] = [];
 
-                for (const command of commands) {
+                for (const cmd of commands) {
+                    const command = cmd[1];
+
                     fields.push({
-                        name: `\`/${command.name}\``,
+                        name: `\`/${cmd[0]}\``,
                         value:
-                            `${command.description ?? 'No description provided.\n'}`
-                            + `Class: ${command.class ?? 'No class provided'}\n`
-                            + `Usage: ${command.usage ?? 'No usage provided'}\n`
-                            + `DM only?: ${command.dmOnly ?? false}\n`
-                            + `Server only?: ${command.serverOnly ?? false}`
-                    })
+                            `${command.description ?? 'No description provided.'}\n`
+                            + `Class: \`${command.class ?? 'No class provided'}\`\n`
+                            + `Usage: \`${command.usage ?? 'No usage provided'}\`\n`
+                            + `DM only?: \`${command.dmOnly ?? false}\`\n`
+                            + `Server only?: \`${command.serverOnly ?? false}\``
+                    });
                 }
+
+                const pages = paginateFields(fields, {
+                    title: reserved.title,
+                    description: reserved.description,
+                    footerText: reserved.footer.text
+                });
+
+                const createEmbed = (page: number) => new Embed({
+                    title: reserved.title,
+                    description: reserved.description,
+                    fields: pages[page],
+                    footer: {
+                        ...reserved.footer,
+                        text: `${reserved.footer.text} • Page ${page + 1}/${pages.length}`
+                    },
+                    timestamp: new Date()
+                });
+
+                const createComponents = (page: number) => [
+                    new Row(
+                        Button.primary("Back", "help:back")
+                            .emoji("⏮️")
+                            .disabled(page <= 0),
+
+                        Button.primary("Next", "help:next")
+                            .emoji("⏭️")
+                            .disabled(page >= pages.length - 1)
+                    )
+                ];
+
+                let currentPage = 0;
+
+                const options = {
+                    embeds: [createEmbed(currentPage)],
+                    components: pages.length > 1
+                        ? createComponents(currentPage)
+                        : []
+                }
+
+                const message = msg.dm
+                    ? await this.bot.dmSend(userId, '', options)
+                    : await msg.reply('', options);
+                
+                new InteractionCollector(
+                    interactionSwitchboard,
+                    (i: any) =>
+                        i.user_id === userId
+                        && i.message_id === message.id
+                        && i.custom_id.startsWith('help:'),
+                    { duration: 300000 },
+                    async (i: any) => {
+                        i.ack();
+
+                        if(pages.length === 0)
+                            return;
+
+                        switch(i.custom_id) {
+                            case 'help:next':
+                                currentPage++;
+                                break;
+                            case 'help:back':
+                                currentPage--;
+                                break;
+                        }
+
+                        await this.bot.edit(
+                            message.channel_id, message.id, '',
+                            {
+                                embeds: [createEmbed(currentPage)],
+                                components: createComponents(currentPage)
+                            }
+                        );
+                    }
+                );
             }
         },
 
@@ -343,7 +421,7 @@ export class Utils extends Cog {
                                     WHERE server_id = ?
                                 `).run(serverId);
 
-                                    db.prepare(`
+                                db.prepare(`
                                     DELETE FROM servers
                                     WHERE server_id = ?
                                 `).run(serverId);
@@ -357,8 +435,8 @@ export class Utils extends Cog {
                                     .description(`Thank you for choosing FrontDesk, where support is made easy & free.\n\nTo begin your setup, please mention your __support roles__, seperated by spaces.`)
                                     .color(embedColor)
                             );
-                        } catch(e:any) {
-                            if(e instanceof SetupCancelled)
+                        } catch (e: any) {
+                            if (e instanceof SetupCancelled)
                                 return;
 
                             console.error(e);
@@ -369,7 +447,7 @@ export class Utils extends Cog {
                                     .color('red'),
                                 false
                             );
-                            
+
                             return;
                         }
                     }
