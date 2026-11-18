@@ -25,7 +25,11 @@ export class Utils extends Cog {
             run: async (msg: any) => {
                 const reserved = {
                     title: 'FrontDesk Commands',
-                    description: `Can't find what you're looking for? Join our [support server]() for more help.`
+                    description: `Can't find what you're looking for? Join our [support server](${process.env.INVITE_URL}) for more help.`,
+                    footer: {
+                        text: 'FrontDesk by asciixd',
+                        icon_url: process.env.ICON_URL
+                    }
                 }
             }
         },

@@ -10,7 +10,10 @@ export const paginateFields = (
         description: string,
         footerText: string
     },
-    maxFields = 10
+    opts = {
+        maxFields: 10,
+        inline: true
+    }
 ): EmbedField[][] => {
     let pages: EmbedField[][] = [];
     let currentPage: EmbedField[] = [];
@@ -30,13 +33,14 @@ export const paginateFields = (
                 name: i === 0
                     ? field.name.slice(0, 256)
                     : `${field.name.slice(0, 240)} (continued)`,
-                value: chunks[i]!
+                value: chunks[i]!,
+                inline: opts.inline ?? true
             }
 
             const fieldCharacters = nextField.name.length + nextField.value?.length;
 
             if (
-                currentPage.length >= maxFields
+                currentPage.length >= opts.maxFields
                 || currentCharacters + fieldCharacters > 6000
             ) {
                 pages.push(currentPage);
