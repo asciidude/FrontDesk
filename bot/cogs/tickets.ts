@@ -190,10 +190,10 @@ export class Utils extends Cog {
                     if (msg.dm)
                         this.bot.dmSend(
                             userId,
-                            `I couldn't close your ticket! Please contact the developer through our [support server](https://yapin.gg/invite/qaFqK6zVXp).`
+                            `I couldn't close your ticket! Please contact the developer through our [support server](${process.env.INVITE_URL}).`
                         );
                     else
-                        msg.reply(`I couldn't close the ticket! Please contact the developer through our [support server](https://yapin.gg/invite/qaFqK6zVXp).`)
+                        msg.reply(`I couldn't close the ticket! Please contact the developer through our [support server](${process.env.INVITE_URL}).`)
                     return;
                 }
             }

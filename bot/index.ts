@@ -426,7 +426,7 @@ bot.on('interaction', async (i: any) => {
             }
         } catch (e: any) {
             console.error(e);
-            i.ephemeral('An error occurred. If this happens again, please contact our [support team](https://yapin.gg/invite/qaFqK6zVXp).');
+            i.ephemeral(`An error occurred. If this happens again, please contact our [support team](${process.env.INVITE_URL}).`);
         }
     }
 });

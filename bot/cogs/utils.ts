@@ -3,6 +3,7 @@ import { Button, Cog, Embed, Row } from '../../dependencies/yapper';
 import { checkPanelParts } from '../../utils/checkPanelParts';
 import { checkPermissions } from '../../utils/checkPermissions';
 import { MessageCollector } from '../../utils/MessageCollector';
+import { paginateFields } from '../../utils/pagintateFields';
 
 class SetupCancelled extends Error { }
 
@@ -16,6 +17,16 @@ export class Utils extends Cog {
             description: 'Pong!',
             run: (msg: any) => {
                 msg.reply('Pong!');
+            }
+        },
+
+        help: {
+            description: 'Get a help embed',
+            run: async (msg: any) => {
+                const reserved = {
+                    title: 'FrontDesk Commands',
+                    description: `Can't find what you're looking for? Join our [support server]() for more help.`
+                }
             }
         },
 
@@ -563,7 +574,7 @@ export class Utils extends Cog {
                         await editEmbed(
                             setupEmbed
                                 .title('Oops!')
-                                .description('Something happened. Please contact the developer on [our community server](https://yapin.gg/invite/qaFqK6zVXp).')
+                                .description(`Something happened. Please contact the developer on [our community server](${process.env.INVITE_URL}).`)
                                 .color('red'),
                             false
                         );
@@ -577,7 +588,7 @@ export class Utils extends Cog {
                     await editEmbed(
                         setupEmbed
                             .title('Oops!')
-                            .description('Something happened! Please try again or contact us via our [support server](https://yapin.gg/invite/qaFqK6zVXp).')
+                            .description(`Something happened! Please try again or contact us via [our community server](${process.env.INVITE_URL}).`)
                             .color('red'),
                         false
                     );
