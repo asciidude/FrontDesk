@@ -463,7 +463,8 @@ export class Utils extends Cog {
                         setupEmbed
                             .title('Guided Setup')
                             .description(`Successfully registered the information for your first ticket panel.\n\nReview it here:\n\`\`\`\n${panelSummary}\`\`\`\n\nCreating open/closed ticket categories now.`)
-                            .color(embedColor)
+                            .color(embedColor),
+                        false
                     );
 
                     // 3 sec. delay for review
@@ -608,13 +609,13 @@ export class Utils extends Cog {
     }
 
     cogLoad() {
-        this.bot.on('setup:cancel', async (ev: {
+        this.bot.onButton('setup:cancel', async (i: {
             serverId: string,
             authorId: string
         }) => {
-            const setup = activeSetups.get(ev.serverId);
+            const setup = activeSetups.get(i.serverId);
 
-            if (!setup || setup.authorId !== ev.authorId)
+            if (!setup || setup.authorId !== i.authorId)
                 return;
 
             await setup.cancel?.();
