@@ -11,6 +11,7 @@ export class Server extends Cog {
         addpanel: {
             description: "Add a panel. Server admins only.",
             serverOnly: true,
+            class: 'server',
             run: async (msg: any) => {
                 // check user perms for admin OR if they have admin role
                 const {
@@ -159,6 +160,7 @@ export class Server extends Cog {
         deletepanel: {
             description: "Delete a panel. Server admins only.",
             serverOnly: true,
+            class: 'server',
             run: async (msg: any) => {
                 // check user perms for admin OR if they have admin role
                 const {
@@ -225,6 +227,7 @@ export class Server extends Cog {
         addrole: {
             description: "Add an admin/support role. Server admins only.",
             serverOnly: true,
+            class: 'server',
             run: async (msg: any) => {
                 const [rawRoleType, role] = msg.argv;
                 const roleType = (rawRoleType ?? '').toLowerCase();
@@ -266,6 +269,7 @@ export class Server extends Cog {
         deleterole: {
             description: "Delete an admin/support role. Server admins only.",
             serverOnly: true,
+            class: 'server',
             run: async (msg: any) => {
                 const [rawRoleType, role] = msg.argv;
                 const roleType = (rawRoleType ?? '').toLowerCase();
@@ -314,6 +318,7 @@ export class Server extends Cog {
         roles: {
             description: "See all the roles your server has",
             serverOnly: true,
+            class: 'server',
             run: async (msg: any) => {
                 const result: any = db.prepare(`
                     SELECT *

@@ -15,6 +15,7 @@ export class Utils extends Cog {
          */
         ping: {
             description: 'Pong!',
+            class: 'utility',
             run: (msg: any) => {
                 msg.reply('Pong!');
             }
@@ -22,6 +23,7 @@ export class Utils extends Cog {
 
         help: {
             description: 'Get a help embed',
+            class: 'utility',
             run: async (msg: any) => {
                 const reserved = {
                     title: 'FrontDesk Commands',
@@ -31,6 +33,8 @@ export class Utils extends Cog {
                         icon_url: process.env.ICON_URL
                     }
                 }
+
+
             }
         },
 
@@ -41,6 +45,7 @@ export class Utils extends Cog {
         setup: {
             description: 'Run the assisted setup. Server admins only.',
             serverOnly: true,
+            class: 'utility',
             run: async (msg: any) => {
                 let serverId = msg.server_id;
                 let authorId = msg.author_id;
