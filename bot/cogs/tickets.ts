@@ -11,6 +11,7 @@ export class Utils extends Cog {
             description: 'Claim the ticket. Support/admin roles only.',
             serverOnly: true,
             class: 'tickets',
+            usage: '/claim',
             run: async (msg: any) => {
                 // Claim a ticket - staff or admin roles only
                 let {
@@ -92,6 +93,7 @@ export class Utils extends Cog {
         close: {
             description: 'Close the ticket, with an optional reason. Support/admin roles & ticket user only.',
             class: 'tickets',
+            usage: '/close',
             run: async (msg: any) => {
                 // Close a ticket - staff, admin roles, or ticket author only
                 let {
@@ -205,6 +207,7 @@ export class Utils extends Cog {
             description: 'Switch from one ticket to another. DM only.',
             dmOnly: true,
             class: 'tickets',
+            usage: '/switch <ticket ID>',
             run: async (msg: any) => {
                 // Get last 5 messages & send them (if >2,000 chars, send in parts)
                 const userId = msg.author_id;
@@ -273,6 +276,7 @@ export class Utils extends Cog {
             description: 'View all your tickets. DM only.',
             dmOnly: true,
             class: 'tickets',
+            usage: '/tickets',
             run: async (msg: any) => {
                 // Get all active tickets a user has and sort them by server.
                 // If embed characters exceed 6,000, add "next" and "back" buttons and split into parts.

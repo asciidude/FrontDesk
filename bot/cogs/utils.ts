@@ -3,7 +3,8 @@ import { Button, Cog, Embed, Row } from '../../dependencies/yapper';
 import { checkPanelParts } from '../../utils/checkPanelParts';
 import { checkPermissions } from '../../utils/checkPermissions';
 import { MessageCollector } from '../../utils/MessageCollector';
-import { paginateFields } from '../../utils/pagintateFields';
+import { paginateFields, type EmbedField } from '../../utils/pagintateFields';
+import { processBatches } from '../../utils/processBatches';
 
 class SetupCancelled extends Error { }
 
@@ -16,6 +17,7 @@ export class Utils extends Cog {
         ping: {
             description: 'Pong!',
             class: 'utility',
+            usage: '/ping',
             run: (msg: any) => {
                 msg.reply('Pong!');
             }
@@ -24,6 +26,7 @@ export class Utils extends Cog {
         help: {
             description: 'Get a help embed',
             class: 'utility',
+            usage: '/help',
             run: async (msg: any) => {
                 const reserved = {
                     title: 'FrontDesk Commands',
@@ -34,7 +37,20 @@ export class Utils extends Cog {
                     }
                 }
 
+                const commands = this.bot.commands;
+                const fields: EmbedField[] = [];
 
+                for (const command of commands) {
+                    fields.push({
+                        name: `\`/${command.name}\``,
+                        value:
+                            `${command.description ?? 'No description provided.\n'}`
+                            + `Class: ${command.class ?? 'No class provided'}\n`
+                            + `Usage: ${command.usage ?? 'No usage provided'}\n`
+                            + `DM only?: ${command.dmOnly ?? false}\n`
+                            + `Server only?: ${command.serverOnly ?? false}`
+                    })
+                }
             }
         },
 
@@ -46,6 +62,7 @@ export class Utils extends Cog {
             description: 'Run the assisted setup. Server admins only.',
             serverOnly: true,
             class: 'utility',
+            usage: '/setup',
             run: async (msg: any) => {
                 let serverId = msg.server_id;
                 let authorId = msg.author_id;
@@ -255,40 +272,42 @@ export class Utils extends Cog {
                     `).get(serverId);
 
                     if (server) {
-                        // Warn user & ask for confirmation
-                        await editEmbed(
-                            setupEmbed
-                                .title('Oops!')
-                                .description('This server has been found in our database already. You can proceed, but it will reset your entire server, it\'s tickets, and it\'s panels.\n\nType `confirm` if you would like to continue. Otherwise, click "Cancel Setup".')
-                                .color('red')
-                        );
-
-                        const confirmRequest = await collectResponse((incomingMsg: any) => {
-                            if (!isAuthor(incomingMsg)) return false;
-                            if (incomingMsg.content.toLowerCase() === 'confirm') return true;
-                            return false;
-                        }, options);
-
-                        if (!confirmRequest[0])
-                            return;
-
-                        // Delete panel messages
-                        const panels: any[] = db.prepare(`
-                            SELECT *
-                            FROM ticket_panels
-                            WHERE server_id = ?
-                        `).all(serverId);
-
-                        for (const panel of panels) {
-                            try {
-                                await this.bot.delete(panel.channel_id, panel.message_id)
-                            } catch (err: any) {
-                                console.error(err);
-                            }
-                        }
-
-                        // Delete open/closed ticket categories
                         try {
+                            // Warn user & ask for confirmation
+                            await editEmbed(
+                                setupEmbed
+                                    .title('Oops!')
+                                    .description('This server has been found in our database already. You can proceed, but it will reset your entire server, it\'s tickets, and it\'s panels.\n\nType `confirm` if you would like to continue. Otherwise, click "Cancel Setup".')
+                                    .color('red')
+                            );
+
+                            const confirmRequest = await collectResponse((incomingMsg: any) => {
+                                if (!isAuthor(incomingMsg)) return false;
+                                if (incomingMsg.content.toLowerCase() === 'confirm') return true;
+                                return false;
+                            }, options);
+
+                            if (!confirmRequest[0])
+                                return;
+
+                            // Delete panel messages
+                            const panels: any[] = db.prepare(`
+                                SELECT *
+                                FROM ticket_panels
+                                WHERE server_id = ?
+                            `).all(serverId);
+
+                            await processBatches(
+                                panels,
+                                async panel => {
+                                    await this.bot.delete(
+                                        panel.channel_id,
+                                        panel.message_id
+                                    );
+                                }
+                            );
+
+                            // Delete open/closed ticket categories and their channels
                             const channels = await this.bot.channels(serverId);
 
                             const categoryIds = [
@@ -302,47 +321,57 @@ export class Utils extends Cog {
                                 categoryIds.includes(c.category_id)
                             );
 
-                            for (let i = 0; i < channelsToDelete.length; i += 5) {
-                                const batch = channelsToDelete.slice(i, i + 5);
-
-                                await Promise.all(
-                                    batch.map((c: any) =>
-                                        this.bot.deleteChannel(c.id)
-                                    )
-                                );
-
-                                if (i + 5 < channelsToDelete.length) {
-                                    await new Promise(resolve => setTimeout(resolve, 1000));
+                            // Delete channels in batches of 5, with 1 second between batches.
+                            await processBatches(
+                                channelsToDelete,
+                                async (channel: any) => {
+                                    await this.bot.deleteChannel(channel.id);
                                 }
-                            }
+                            );
 
-                            await this.bot.deleteCategory(serverId, server.open_ticket_category);
-                            await this.bot.deleteCategory(serverId, server.closed_ticket_category);
-                        } catch (e: any) {
+                            // Delete categories in batches too.
+                            await processBatches(
+                                [...new Set(categoryIds)],
+                                async categoryId => {
+                                    await this.bot.deleteCategory(serverId, categoryId);
+                                }
+                            );
+
+                            db.transaction(() => {
+                                db.prepare(`
+                                    DELETE FROM tickets
+                                    WHERE server_id = ?
+                                `).run(serverId);
+
+                                    db.prepare(`
+                                    DELETE FROM servers
+                                    WHERE server_id = ?
+                                `).run(serverId);
+
+                                // ticket_panels are automatically deleted through ON DELETE CASCADE.
+                            })();
+
+                            await editEmbed(
+                                setupEmbed
+                                    .title('Guided Setup')
+                                    .description(`Thank you for choosing FrontDesk, where support is made easy & free.\n\nTo begin your setup, please mention your __support roles__, seperated by spaces.`)
+                                    .color(embedColor)
+                            );
+                        } catch(e:any) {
+                            if(e instanceof SetupCancelled)
+                                return;
+
                             console.error(e);
+                            await editEmbed(
+                                setupEmbed
+                                    .title('Oops!')
+                                    .description(`Something happened. Please contact the developer via our [support server](${process.env.INVITE_LINK})`)
+                                    .color('red'),
+                                false
+                            );
+                            
+                            return;
                         }
-
-                        // delete all server data
-                        db.transaction(() => {
-                            db.prepare(`
-                                DELETE FROM tickets
-                                WHERE server_id = ?
-                            `).run(serverId);
-
-                            db.prepare(`
-                                DELETE FROM servers
-                                WHERE server_id = ?
-                            `).run(serverId);
-
-                            // panels are automatically handled thru cascade on delete
-                        })();
-
-                        await editEmbed(
-                            setupEmbed
-                                .title('Guided Setup')
-                                .description(`Thank you for choosing FrontDesk, where support is made easy & free.\n\nTo begin your setup, please mention your __support roles__, seperated by spaces.`)
-                                .color(embedColor)
-                        );
                     }
 
                     // SUPPORT ROLES
@@ -428,7 +457,7 @@ export class Utils extends Cog {
                                 timestamp: new Date()
                             });
 
-                            const message = await this.bot.send(panelChannelId, '', { embeds: [ panelEmbed ] });
+                            const message = await this.bot.send(panelChannelId, '', { embeds: [panelEmbed] });
 
                             setupResources.messages.push({
                                 channelId: panelChannelId,
@@ -440,7 +469,7 @@ export class Utils extends Cog {
                                     'PATCH',
                                     `/channels/${panelChannelId}/messages/${message.id}`,
                                     {
-                                        embeds: [ panelEmbed.footer(`Panel ID: ${panelChannelId}`) ],
+                                        embeds: [panelEmbed.footer(`Panel ID: ${panelChannelId}`)],
                                         components: [
                                             new Row(
                                                 Button.success(

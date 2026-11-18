@@ -12,6 +12,7 @@ export class Server extends Cog {
             description: "Add a panel. Server admins only.",
             serverOnly: true,
             class: 'server',
+            usage: '/addpanel',
             run: async (msg: any) => {
                 // check user perms for admin OR if they have admin role
                 const {
@@ -161,6 +162,7 @@ export class Server extends Cog {
             description: "Delete a panel. Server admins only.",
             serverOnly: true,
             class: 'server',
+            usage: '/deletepanel <panel ID>',
             run: async (msg: any) => {
                 // check user perms for admin OR if they have admin role
                 const {
@@ -228,6 +230,7 @@ export class Server extends Cog {
             description: "Add an admin/support role. Server admins only.",
             serverOnly: true,
             class: 'server',
+            usage: '/addrole <admin OR support> <@role>',
             run: async (msg: any) => {
                 const [rawRoleType, role] = msg.argv;
                 const roleType = (rawRoleType ?? '').toLowerCase();
@@ -270,6 +273,7 @@ export class Server extends Cog {
             description: "Delete an admin/support role. Server admins only.",
             serverOnly: true,
             class: 'server',
+            usage: '/deleterole <@role>',
             run: async (msg: any) => {
                 const [rawRoleType, role] = msg.argv;
                 const roleType = (rawRoleType ?? '').toLowerCase();
@@ -316,18 +320,39 @@ export class Server extends Cog {
         },
 
         roles: {
-            description: "See all the roles your server has",
+            description: "See all the roles your server has. Server admins only.",
             serverOnly: true,
             class: 'server',
+            usage: '/roles',
             run: async (msg: any) => {
+                const {
+                    server_id: serverId,
+                    author_id: userId
+                } = msg;
+
                 const result: any = db.prepare(`
                     SELECT *
                     FROM servers
                     WHERE server_id = ?
                 `).get(msg.server_id);
-
+                
+                const user = this.bot.member(serverId, userId);
                 const adminRoles = result.admin_roles;
                 const supportRoles = result.support_roles;
+
+                const {
+                    error: serverNotFound, isAdmin
+                } = await isAdminOrSupport(user, serverId, false);
+
+                if (serverNotFound) {
+                    msg.reply(serverNotFound);
+                    return;
+                }
+
+                if (!isAdmin) {
+                    msg.reply('You must have the admin role in order view configured roles.');
+                    return;
+                }
 
                 msg.reply(
                     `Admin roles: ${
